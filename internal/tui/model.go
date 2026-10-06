@@ -1,0 +1,374 @@
+// Package tui implements the Bubble Tea font picker: browse the font
+// library, filter, manual live preview (Space/p), commit (Enter), restore
+// (Esc), slot cycling (s), import (i) and Nerd Font download (d).
+//
+// The list is focused on launch so arrows move immediately; Tab reaches the
+// filter. Highlighting only updates the info pane, never applies a font.
+// Downloads run as tea.Cmd values producing messages, and every I/O error
+// surfaces as status-line text instead of crashing.
+package tui
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"termux-fonts-go/internal/apply"
+	"termux-fonts-go/internal/downloader"
+	"termux-fonts-go/internal/scan"
+)
+
+// FilterMsg sets the list filter to its value and narrows visible items.
+type FilterMsg string
+
+type filterMsg = FilterMsg
+
+type downloadStartMsg struct{ name string }
+
+type downloadProgressMsg float64
+
+type downloadDoneMsg struct {
+	path string
+	err  error
+}
+
+type importDoneMsg struct {
+	path string
+	err  error
+}
+
+type overlay int
+
+const (
+	overlayNone overlay = iota
+	overlayImport
+	overlayDownload
+)
+
+// slotOrder is the fixed s-key cycle.
+var slotOrder = []string{"regular", "bold", "italic", "bold-italic"}
+
+// Model is the Elm state: entries, filter, slot, session, status and
+// overlay/download progress.
+type Model struct {
+	entries  []scan.FontEntry
+	list     list.Model
+	delegate fontDelegate
+	filter   textinput.Model
+
+	focusFilter bool
+	slot        string
+	state       *apply.SessionState
+	status      string
+	width       int
+	height      int
+
+	overlay     overlay
+	importInput textinput.Model
+
+	dlNames    []string
+	dlCursor   int
+	dlActive   bool
+	dlName     string
+	dlProgress float64
+
+	spinner  spinner.Model
+	progress progress.Model
+}
+
+// NewModel loads the library and returns a list-focused model.
+func NewModel() Model {
+	entries, _ := scan.ListLibrary()
+	if entries == nil {
+		entries = []scan.FontEntry{}
+	}
+	filter := textinput.New()
+	filter.Placeholder = "Filter fonts..."
+	filter.CharLimit = 64
+
+	l := list.New(nil, fontDelegate{}, 40, 14)
+	l.SetShowTitle(false)
+	l.SetShowStatusBar(false)
+	l.SetShowHelp(false)
+	l.SetShowPagination(false)
+	l.SetFilteringEnabled(false)
+	l.DisableQuitKeybindings()
+
+	importInput := textinput.New()
+	importInput.Placeholder = "/sdcard/Download/Hack.ttf"
+	importInput.CharLimit = 256
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(accent)
+
+	bar := progress.New(progress.WithSolidFill("#7C6FF0"), progress.WithWidth(40))
+
+	names := make([]string, 0, len(downloader.NerdFonts))
+	for name := range downloader.NerdFonts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	m := Model{
+		entries:     entries,
+		list:        l,
+		delegate:    fontDelegate{},
+		filter:      filter,
+		slot:        "regular",
+		state:       apply.NewSessionState(),
+		status:      "space preview · enter keep · tab filter",
+		importInput: importInput,
+		dlNames:     names,
+		spinner:     sp,
+		progress:    bar,
+	}
+	m.refreshItems()
+	return m
+}
+
+// InitialModel is the entry point for tea.NewProgram.
+func InitialModel() Model { return NewModel() }
+
+// Init focuses the list (arrows move immediately) and issues no commands.
+func (m Model) Init() tea.Cmd { return nil }
+
+// VisibleEntries returns the currently unfiltered-out library entries.
+func (m Model) VisibleEntries() []scan.FontEntry {
+	out := []scan.FontEntry{}
+	for _, item := range m.list.Items() {
+		if fi, ok := item.(fontItem); ok {
+			out = append(out, fi.entry)
+		}
+	}
+	return out
+}
+
+// Dirty reports whether a preview is awaiting commit/restore.
+func (m Model) Dirty() bool { return apply.IsPreviewDirty(m.state) }
+
+// Downloading reports whether a download overlay/progress is active.
+func (m Model) Downloading() bool { return m.dlActive }
+
+// DownloadProgress returns the current download fraction in [0, 1].
+func (m Model) DownloadProgress() float64 { return m.dlProgress }
+
+func (m Model) selectedEntry() (scan.FontEntry, bool) {
+	item := m.list.SelectedItem()
+	fi, ok := item.(fontItem)
+	if !ok {
+		return scan.FontEntry{}, false
+	}
+	return fi.entry, true
+}
+
+func (m *Model) refreshItems() {
+	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
+	items := make([]list.Item, 0, len(m.entries))
+	for _, e := range m.entries {
+		if q == "" || strings.Contains(strings.ToLower(e.Name), q) ||
+			strings.Contains(strings.ToLower(e.Family), q) {
+			items = append(items, fontItem{entry: e})
+		}
+	}
+	m.list.SetItems(items)
+	m.delegate.query = strings.TrimSpace(m.filter.Value())
+	m.list.SetDelegate(m.delegate)
+}
+
+// Update routes key, filter and download messages; cursor movement only
+// changes the highlight and never touches slot files.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.sizeWidgets()
+		return m, nil
+	case FilterMsg:
+		m.filter.SetValue(string(msg))
+		m.refreshItems()
+		return m, nil
+	case downloadStartMsg:
+		m.dlActive = true
+		m.dlName = msg.name
+		m.dlProgress = 0
+		return m, tea.Batch(fetchCmd(msg.name), m.spinner.Tick)
+	case downloadProgressMsg:
+		m.dlProgress = clamp01(float64(msg))
+		return m, nil
+	case downloadDoneMsg:
+		m.dlActive = false
+		m.dlProgress = 0
+		m.overlay = overlayNone
+		if msg.err != nil {
+			m.status = "Download failed: " + msg.err.Error()
+		} else {
+			m.status = "Downloaded " + baseName(msg.path)
+			m.rescan()
+		}
+		return m, nil
+	case importDoneMsg:
+		m.overlay = overlayNone
+		m.importInput.Blur()
+		if msg.err != nil {
+			m.status = "Import failed: " + msg.err.Error()
+		} else {
+			m.status = "Imported " + baseName(msg.path)
+			m.rescan()
+		}
+		return m, nil
+	case spinner.TickMsg:
+		if m.dlActive {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			// Ease the bar toward 90% while the fetch runs; the done
+			// message dismisses it. Real progress arrives via
+			// downloadProgressMsg when available.
+			if m.dlProgress < 0.9 {
+				m.dlProgress += (0.9 - m.dlProgress) * 0.08
+			}
+			return m, cmd
+		}
+		return m, nil
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+	}
+	if m.focusFilter && m.overlay == overlayNone {
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		m.refreshItems()
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	if m.overlay == overlayImport {
+		switch key {
+		case "esc":
+			m.overlay = overlayNone
+			m.importInput.Blur()
+			m.status = "Import cancelled"
+			return m, nil
+		case "enter":
+			return m, importCmd(strings.TrimSpace(m.importInput.Value()))
+		}
+		var cmd tea.Cmd
+		m.importInput, cmd = m.importInput.Update(msg)
+		return m, cmd
+	}
+
+	if m.overlay == overlayDownload {
+		switch key {
+		case "esc", "q":
+			m.overlay = overlayNone
+			m.status = "Download cancelled"
+			return m, nil
+		case "enter":
+			if !m.dlActive && len(m.dlNames) > 0 {
+				name := m.dlNames[m.dlCursor]
+				return m, func() tea.Msg { return downloadStartMsg{name: name} }
+			}
+			return m, nil
+		case "up", "k":
+			if m.dlCursor > 0 {
+				m.dlCursor--
+			}
+			return m, nil
+		case "down", "j":
+			if m.dlCursor < len(m.dlNames)-1 {
+				m.dlCursor++
+			}
+			return m, nil
+		}
+		return m, nil
+	}
+
+	if m.focusFilter {
+		switch key {
+		case "tab", "enter":
+			m.focusFilter = false
+			m.filter.Blur()
+			return m, nil
+		case "esc":
+			m.focusFilter = false
+			m.filter.Blur()
+			m.filter.SetValue("")
+			m.refreshItems()
+			m.status = "Filter cleared"
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		m.refreshItems()
+		return m, cmd
+	}
+
+	switch key {
+	case "q":
+		if apply.IsPreviewDirty(m.state) {
+			_, _ = apply.RestoreOriginal(m.state)
+			m.status = "Restored original — bye"
+		}
+		return m, tea.Quit
+	case "esc":
+		if apply.IsPreviewDirty(m.state) {
+			if _, err := apply.RestoreOriginal(m.state); err != nil {
+				m.status = "Restore failed: " + err.Error()
+			} else {
+				m.status = "Restored original"
+			}
+		} else {
+			m.status = "Nothing to restore"
+		}
+		return m, nil
+	case "tab":
+		m.focusFilter = true
+		m.filter.Focus()
+		return m, textinput.Blink
+	case "s":
+		m.cycleSlot()
+		return m, nil
+	case " ", "p":
+		m.doPreview()
+		return m, nil
+	case "enter":
+		m.doCommit()
+		return m, nil
+	case "i":
+		m.overlay = overlayImport
+		m.importInput.Focus()
+		m.status = "Import: type a font path — Enter imports, Esc cancels"
+		return m, textinput.Blink
+	case "d":
+		m.overlay = overlayDownload
+		m.dlCursor = 0
+		m.status = "Download: ↑/↓ choose — Enter downloads, Esc cancels"
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+func (m *Model) sizeWidgets() {
+	listH := 14
+	if m.height > 0 {
+		listH = max(m.height-12, 6)
+	}
+	listW := 40
+	if m.width > 0 {
+		listW = max(m.width*42/100-4, 20)
+	}
+	m.list.SetSize(listW, listH)
+	m.progress.Width = max(listW, 20)
+}

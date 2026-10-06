@@ -1,0 +1,160 @@
+package tui
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"termux-fonts-go/internal/paths"
+)
+
+func useTermuxHome(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "termux")
+	t.Setenv("TERMUX_HOME", root)
+	return root
+}
+
+// noReload forces ReloadSettings down the missing-binary path so tests are
+// hermetic on machines that do (or do not) ship termux-reload-settings.
+func noReload(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+}
+
+func fixtureBytes(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "apply", "testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// seedLibrary copies the valid apply fixtures into the font library under
+// the given names.
+func seedLibrary(t *testing.T, names ...string) {
+	t.Helper()
+	dir := paths.FontsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixtures := []string{"a.ttf", "b.ttf"}
+	for i, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), fixtureBytes(t, fixtures[i%len(fixtures)]), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func updateModel(t *testing.T, m Model, msg tea.Msg) Model {
+	t.Helper()
+	next, _ := m.Update(msg)
+	out, ok := next.(Model)
+	if !ok {
+		t.Fatalf("Update(%T) returned %T, want tui.Model", msg, next)
+	}
+	return out
+}
+
+func keyRunes(s string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+func TestModel_FilterNarrowsList(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf", "JetBrainsMono.ttf", "FiraCode.ttf")
+
+	m := NewModel()
+	if got := len(m.VisibleEntries()); got != 3 {
+		t.Fatalf("unfiltered visible entries = %d, want 3", got)
+	}
+
+	m = updateModel(t, m, FilterMsg("hack"))
+	visible := m.VisibleEntries()
+	if len(visible) != 1 {
+		t.Fatalf("filtered visible entries = %d, want 1", len(visible))
+	}
+	if visible[0].Name != "Hack.ttf" {
+		t.Fatalf("filtered entry = %q, want Hack.ttf", visible[0].Name)
+	}
+}
+
+func TestModel_HighlightIsSideEffectFree(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf", "JetBrainsMono.ttf", "FiraCode.ttf")
+
+	target, err := paths.FontSlotPath("regular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := fixtureBytes(t, "a.ttf")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel()
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyUp})
+
+	if m.Dirty() {
+		t.Fatal("cursor move marked preview dirty")
+	}
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Fatal("cursor move changed the slot file")
+	}
+}
+
+func TestPreviewView_ShowsSampleAndCoverage(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf", "JetBrainsMono.ttf")
+
+	m := NewModel()
+	pane := m.PreviewPane()
+	for _, want := range []string{"AaBbCc 0123456789", "\ue0a0", "font.ttf", "backup"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("preview pane missing %q:\n%s", want, pane)
+		}
+	}
+}
+
+func TestDownload_ShowsProgress(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	m = updateModel(t, m, downloadStartMsg{name: "Hack-Regular"})
+	if !m.Downloading() {
+		t.Fatal("downloadStartMsg did not mark download active")
+	}
+
+	m = updateModel(t, m, downloadProgressMsg(0.5))
+	if got := m.DownloadProgress(); got != 0.5 {
+		t.Fatalf("download progress = %v, want 0.5", got)
+	}
+	if !m.Downloading() {
+		t.Fatal("download dismissed before done")
+	}
+
+	m = updateModel(t, m, downloadDoneMsg{path: "/tmp/Hack.ttf"})
+	if m.Downloading() {
+		t.Fatal("downloadDoneMsg did not dismiss the download")
+	}
+	if got := m.DownloadProgress(); got != 0 {
+		t.Fatalf("progress after done = %v, want 0", got)
+	}
+}
