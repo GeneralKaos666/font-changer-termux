@@ -69,6 +69,19 @@ preview (58%) via Bubbles `list` + `textinput` + `viewport`, styled with Lip Glo
    Python; downloads as `tea.Cmd` producing messages; all I/O errors surface
    in the status line, never crash.
 
+## 8. Visual style (approved)
+
+Keyboard-first Lip Gloss treatment, no mouse required:
+- Gradient title bar (`termux-fonts` + active slot), rounded borders with a
+  single adaptive accent color that stays readable on dark and light terminals.
+- Preview pane: large `AaBbCc 0123456789` sample block, Nerd/powerline
+  coverage row (`  `), plus file info (family/style/size) and slot +
+  backup-status line (`font.ttf ← Hack • backup taken`).
+- Filter input with match highlighting; styled help bar with all keys;
+  spinner + progress bar on downloads; selected row highlighted with
+  accent background, not just a cursor.
+- Restrained palette: accent + muted + default foreground only — no rainbow.
+
 ## 4. Data flow (approved)
 
 List focused on launch; typing filters; Space/p → validate → backup-once →

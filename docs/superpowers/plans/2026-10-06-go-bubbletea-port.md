@@ -241,12 +241,15 @@ git commit -m "feat(go): add font import and Nerd Font download"
   - Focus: list focused on Init (arrows move immediately; Tab reaches filter)
 
 Layout: Bubbles `list` (42%) + viewport/static preview (58%), `textinput` filter, Lip Gloss borders. Highlight updates info only. Downloads run as `tea.Cmd` returning messages; all I/O errors become status-line text.
+Visual style (spec §8): gradient title bar, rounded borders + adaptive accent, rich preview pane (large sample + coverage row + slot/backup status), filter match highlight, spinner + progress on downloads, styled help bar, accent-background selection. Palette restrained to accent + muted + foreground.
 
 - [ ] **Step 1: Write failing test (model-level, no TTY)**
 
 ```go
 func TestModel_FilterNarrowsList(t *testing.T) // Update(filterMsg) shrinks visible items
 func TestModel_HighlightIsSideEffectFree(t *testing.T) // cursor move → slot bytes unchanged
+func TestPreviewView_ShowsSampleAndCoverage(t *testing.T) // preview pane contains Aa sample + coverage row + slot/backup status
+func TestDownload_ShowsProgress(t *testing.T) // progress messages update model 0→1, done dismisses
 ```
 
 - [ ] **Step 2: Run to verify they fail**
