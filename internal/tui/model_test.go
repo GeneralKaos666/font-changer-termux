@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,7 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"termux-fonts-go/internal/apply"
 	"termux-fonts-go/internal/paths"
+	"termux-fonts-go/internal/scan"
 )
 
 func useTermuxHome(t *testing.T) string {
@@ -156,5 +159,80 @@ func TestDownload_ShowsProgress(t *testing.T) {
 	}
 	if got := m.DownloadProgress(); got != 0 {
 		t.Fatalf("progress after done = %v, want 0", got)
+	}
+}
+
+func TestNewModel_SurfacesLibraryLoadError(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	old := listLibrary
+	listLibrary = func() ([]scan.FontEntry, error) {
+		return nil, errors.New("boom")
+	}
+	defer func() { listLibrary = old }()
+
+	m := NewModel()
+	if !strings.Contains(m.status, "boom") {
+		t.Fatalf("load-error status = %q, want it to mention the error", m.status)
+	}
+	if len(m.VisibleEntries()) != 0 {
+		t.Fatalf("visible entries = %d, want 0 on load failure", len(m.VisibleEntries()))
+	}
+}
+
+func TestQuit_RestoreFailureStaysOpen(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf", "JetBrainsMono.ttf")
+
+	m := NewModel()
+	m = updateModel(t, m, keyRunes(" "))
+	if !m.Dirty() {
+		t.Fatalf("space did not preview; status=%q", m.status)
+	}
+
+	old := restoreOriginal
+	restoreOriginal = func(*apply.SessionState) (bool, error) {
+		return false, errors.New("boom")
+	}
+	defer func() { restoreOriginal = old }()
+
+	next, cmd := m.Update(keyRunes("q"))
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("q with failed restore quit instead of staying open")
+	}
+	if !strings.Contains(m.status, "Restore failed") {
+		t.Fatalf("status = %q, want restore failure text", m.status)
+	}
+	if !m.Dirty() {
+		t.Fatal("failed restore cleared the dirty flag")
+	}
+
+	restoreOriginal = old
+	_, cmd = m.Update(keyRunes("q"))
+	if cmd == nil {
+		t.Fatal("q with successful restore returned no quit cmd")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("q cmd returned %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func TestDownload_ShowsIndeterminateStatus(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	m = updateModel(t, m, downloadStartMsg{name: "Hack-Regular"})
+	if !m.Downloading() {
+		t.Fatal("downloadStartMsg did not mark download active")
+	}
+	if !strings.Contains(m.status, "no progress info") {
+		t.Fatalf("download status = %q, want indeterminate wording", m.status)
+	}
+	if got := m.View(); !strings.Contains(got, "no progress info") {
+		t.Fatal("download view does not say indeterminate")
 	}
 }

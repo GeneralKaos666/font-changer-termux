@@ -201,8 +201,8 @@ func (m Model) View() string {
 	}
 	if m.dlActive {
 		bar := m.progress.ViewAs(m.dlProgress)
-		b.WriteString(boxStyle.Render(fmt.Sprintf("%s Downloading %s  %3.0f%%\n%s",
-			m.spinner.View(), m.dlName, m.dlProgress*100, bar)) + "\n")
+		b.WriteString(boxStyle.Render(fmt.Sprintf("%s Downloading %s… (no progress info)\n%s",
+			m.spinner.View(), m.dlName, bar)) + "\n")
 	}
 
 	status := m.status

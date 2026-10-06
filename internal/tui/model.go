@@ -9,6 +9,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -54,6 +55,13 @@ const (
 // slotOrder is the fixed s-key cycle.
 var slotOrder = []string{"regular", "bold", "italic", "bold-italic"}
 
+// listLibrary and restoreOriginal are package-level vars (rather than
+// direct calls) so tests can inject load/restore failures TTY-free.
+var (
+	listLibrary     = scan.ListLibrary
+	restoreOriginal = apply.RestoreOriginal
+)
+
 // Model is the Elm state: entries, filter, slot, session, status and
 // overlay/download progress.
 type Model struct {
@@ -83,10 +91,15 @@ type Model struct {
 }
 
 // NewModel loads the library and returns a list-focused model.
+// A library load failure surfaces as status text, never a silent empty list.
 func NewModel() Model {
-	entries, _ := scan.ListLibrary()
+	entries, loadErr := listLibrary()
 	if entries == nil {
 		entries = []scan.FontEntry{}
+	}
+	status := "space preview · enter keep · tab filter"
+	if loadErr != nil {
+		status = "Library load failed: " + loadErr.Error()
 	}
 	filter := textinput.New()
 	filter.Placeholder = "Filter fonts..."
@@ -123,7 +136,7 @@ func NewModel() Model {
 		filter:      filter,
 		slot:        "regular",
 		state:       apply.NewSessionState(),
-		status:      "space preview · enter keep · tab filter",
+		status:      status,
 		importInput: importInput,
 		dlNames:     names,
 		spinner:     sp,
@@ -198,6 +211,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dlActive = true
 		m.dlName = msg.name
 		m.dlProgress = 0
+		// Fetch reports no byte fractions, so the bar is an activity
+		// indicator: say so instead of implying measured progress.
+		m.status = fmt.Sprintf("Downloading %s… (no progress info)", msg.name)
 		return m, tea.Batch(fetchCmd(msg.name), m.spinner.Tick)
 	case downloadProgressMsg:
 		m.dlProgress = clamp01(float64(msg))
@@ -315,13 +331,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "q":
 		if apply.IsPreviewDirty(m.state) {
-			_, _ = apply.RestoreOriginal(m.state)
+			if _, err := restoreOriginal(m.state); err != nil {
+				m.status = "Restore failed: " + err.Error()
+				return m, nil
+			}
 			m.status = "Restored original — bye"
 		}
 		return m, tea.Quit
 	case "esc":
 		if apply.IsPreviewDirty(m.state) {
-			if _, err := apply.RestoreOriginal(m.state); err != nil {
+			if _, err := restoreOriginal(m.state); err != nil {
 				m.status = "Restore failed: " + err.Error()
 			} else {
 				m.status = "Restored original"
