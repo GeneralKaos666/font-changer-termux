@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
 from textual.app import App
 
-from termux_fonts import apply
+from termux_fonts import apply, paths, scan
 from termux_fonts.screens import FontPickerScreen
 
 
@@ -61,8 +66,73 @@ class TermuxFontsApp(App):
         self.exit()
 
 
-def main() -> None:
-    """Run the font picker TUI."""
+def ensure_builtin_seed() -> Path | None:
+    """Seed the library from the active ``font.ttf`` when it is empty.
+
+    When ``fonts/`` holds no fonts but the ``regular`` slot file exists,
+    copy it to ``fonts/Current.ttf`` so first launch is never empty.
+    Returns the seed path, or ``None`` when no seeding was needed.
+    """
+    if scan.list_library():
+        return None
+    src = paths.font_slot_path("regular")
+    if not src.is_file():
+        return None
+    dest = paths.fonts_dir() / "Current.ttf"
+    if dest.is_file():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    return dest
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="termux-fonts",
+        description="Change the Termux terminal font (TUI or CLI).",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="Print library font names and exit.",
+    )
+    parser.add_argument(
+        "--apply",
+        metavar="NAME",
+        default=None,
+        help="Install library font NAME into --slot and exit.",
+    )
+    parser.add_argument(
+        "--slot",
+        default="regular",
+        choices=sorted(paths.SLOT_FILES),
+        help="Font slot for --apply (default: regular).",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the font picker TUI, or handle --list / --apply for CLI use."""
+    ensure_builtin_seed()
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.list:
+        for entry in scan.list_library():
+            print(entry.name)
+        return
+    if args.apply is not None:
+        match = next(
+            (e for e in scan.list_library() if e.name == args.apply), None
+        )
+        if match is None:
+            parser.error(f"unknown font: {args.apply!r}")
+        try:
+            target = apply.install_font(match.path, args.slot)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(f"Applied {match.name} to {args.slot} ({target})")
+        return
     TermuxFontsApp().run()
 
 
