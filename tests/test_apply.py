@@ -107,3 +107,32 @@ def test_rapid_repreview_single_backup(tmp_path, monkeypatch):
     backups = paths.backups_dir()
     assert len(list(backups.glob("font-*.ttf"))) == 1
     assert target.read_bytes() == fonts[-1].read_bytes()
+
+
+def test_multi_slot_backups_independent(tmp_path, monkeypatch):
+    # Cross-slot: previewing bold then regular must keep 2 distinct backups.
+    _use_termux_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(apply, "reload_settings", lambda: True)
+    reg_target = paths.font_slot_path("regular")
+    bold_target = paths.font_slot_path("bold")
+    reg_target.parent.mkdir(parents=True, exist_ok=True)
+    _make_font(reg_target, family="RegOrig")
+    _make_font(bold_target, family="BoldOrig")
+    reg_orig = reg_target.read_bytes()
+    bold_orig = bold_target.read_bytes()
+    st = apply.new_session_state()
+    new_bold = _make_font(tmp_path / "nb.ttf", family="NB")
+    new_reg = _make_font(tmp_path / "nr.ttf", family="NR")
+    apply.preview_font(new_bold, "bold", st)
+    apply.preview_font(new_reg, "regular", st)
+    backups = paths.backups_dir()
+    all_bk = sorted(backups.glob("font-*.ttf"))
+    assert len(all_bk) == 2
+    bold_bk = list(backups.glob("font-bold-*.ttf"))
+    assert len(bold_bk) == 1
+    assert bold_bk[0].read_bytes() == bold_orig
+    reg_bk = [p for p in all_bk if p not in bold_bk]
+    assert len(reg_bk) == 1
+    assert reg_bk[0].read_bytes() == reg_orig
+    assert reg_target.read_bytes() == new_reg.read_bytes()
+    assert bold_target.read_bytes() == new_bold.read_bytes()

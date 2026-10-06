@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from datetime import datetime
@@ -30,6 +31,18 @@ def new_session_state() -> dict:
     }
 
 
+def _is_slot_backup(candidate: Path, target: Path) -> bool:
+    """True when *candidate* is a timestamped backup of *target*'s slot."""
+    return (
+        re.fullmatch(
+            rf"{re.escape(target.stem)}-\d{{4}}-\d{{2}}-\d{{2}}-\d{{6}}"
+            rf"{re.escape(target.suffix)}",
+            candidate.name,
+        )
+        is not None
+    )
+
+
 def ensure_backup_once(target: Path, backups: Path | None = None) -> Path | None:
     """Back up *target* once; reuse the existing backup on repeat calls.
 
@@ -40,7 +53,11 @@ def ensure_backup_once(target: Path, backups: Path | None = None) -> Path | None
         return None
     dest_dir = Path(backups) if backups is not None else paths.backups_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
-    existing = sorted(dest_dir.glob(f"{target.stem}-*{target.suffix}"))
+    existing = sorted(
+        p
+        for p in dest_dir.glob(f"{target.stem}-[0-9][0-9][0-9][0-9]-*{target.suffix}")
+        if _is_slot_backup(p, target)
+    )
     if existing:
         return existing[0]
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
