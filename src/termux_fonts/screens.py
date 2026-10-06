@@ -86,6 +86,9 @@ class FontPickerScreen(Screen):
     def on_mount(self) -> None:
         self.entries = scan.list_library()
         self._show_entries(self.entries)
+        # Arrows must move the highlight immediately: focus the list,
+        # not the filter (Tab still reaches the filter for typing).
+        self.query_one("#picker-list", ListView).focus()
 
     # -- list / filter ----------------------------------------------------
 

@@ -112,3 +112,34 @@ def test_enter_after_preview_commits_once(tmp_path, monkeypatch):
             assert calls["reload"] == 1
 
     asyncio.run(_check())
+
+
+def test_list_focused_on_mount_so_arrows_move(tmp_path, monkeypatch):
+    """Arrows must move the highlight right after launch (no Tab needed).
+
+    Regression: focus used to land in the filter Input, so up/down edited
+    the filter and the highlight never moved.
+    """
+    from termux_fonts import paths
+    from termux_fonts.app import TermuxFontsApp
+    from textual.widgets import Input, ListView
+
+    monkeypatch.setenv("TERMUX_HOME", str(tmp_path / "termux"))
+    library = paths.fonts_dir()
+    library.mkdir(parents=True)
+    _make_font(library / "Alpha.ttf", family="Alpha")
+    _make_font(library / "Beta.ttf", family="Beta")
+
+    async def _check():
+        app = TermuxFontsApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert isinstance(app.focused, ListView)
+            assert not isinstance(app.focused, Input)
+            list_view = app.screen.query_one("#picker-list", ListView)
+            assert list_view.index == 0
+            await pilot.press("down")
+            await pilot.pause()
+            assert list_view.index == 1
+
+    asyncio.run(_check())
