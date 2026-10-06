@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
@@ -148,6 +149,11 @@ class FontPickerScreen(Screen):
     def _set_status(self, message: str) -> None:
         self.query_one("#status", Static).update(message)
 
+    def _with_reload_hint(self, message: str) -> str:
+        if apply.last_reload_ok() is False:
+            return f"{message} ({apply.MANUAL_RESTART_HINT})"
+        return message
+
     # -- font actions -----------------------------------------------------
 
     def action_preview(self) -> None:
@@ -157,11 +163,14 @@ class FontPickerScreen(Screen):
             return
         try:
             apply.preview_font(entry.path, self.slot, self.state)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             self.notify(str(exc), severity="error")
             return
-        self._set_status(f"Preview {entry.name} — Enter keeps, Esc restores")
-        self.notify(f"Preview {entry.name} — Enter keeps, Esc restores")
+        status = self._with_reload_hint(
+            f"Preview {entry.name} — Enter keeps, Esc restores"
+        )
+        self._set_status(status)
+        self.notify(status)
 
     def action_commit(self) -> None:
         if apply.is_preview_dirty(self.state):
@@ -175,10 +184,11 @@ class FontPickerScreen(Screen):
             return
         try:
             target = apply.install_font(entry.path, self.slot)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             self.notify(str(exc), severity="error")
             return
-        self._set_status(f"Installed {target.name}")
+        status = self._with_reload_hint(f"Installed {target.name}")
+        self._set_status(status)
         self.notify(f"Installed {entry.name}")
 
     def action_cycle_slot(self) -> None:
@@ -202,13 +212,21 @@ class FontPickerScreen(Screen):
 
     def action_back_or_restore(self) -> None:
         if apply.is_preview_dirty(self.state):
-            apply.restore_original(self.state)
-            self._set_status("Preview discarded — original restored")
+            try:
+                apply.restore_original(self.state)
+            except OSError as exc:
+                self.notify(str(exc), severity="error")
+                return
+            status = self._with_reload_hint("Preview discarded — original restored")
+            self._set_status(status)
             self.notify("Original restored")
 
     def on_unmount(self) -> None:
         if apply.is_preview_dirty(self.state):
-            apply.restore_original(self.state)
+            try:
+                apply.restore_original(self.state)
+            except OSError:
+                pass
 
 
 class ImportScreen(Screen):
@@ -244,19 +262,54 @@ class DownloadScreen(Screen):
         yield Label("Available Nerd Fonts (type a name):")
         yield Static("\n".join(sorted(NERD_FONTS)), id="dl-list")
         yield Input(placeholder="JetBrainsMono-Regular", id="download-name")
+        yield Static("", id="dl-status")
         yield Footer()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "download-name":
             return
         name = event.value.strip()
-        self.notify(f"Downloading {name}...")
+        if not name:
+            self.notify("Enter a font name", severity="warning")
+            return
+        # Non-blocking: fetch() does network I/O, so run it in a worker
+        # thread and keep the TUI responsive.
+        self.query_one("#dl-status", Static).update(
+            f"Downloading {name}... (UI stays responsive)"
+        )
+        event.input.disabled = True
+        self._download(name)
+
+    @work(thread=True, exclusive=True)
+    def _download(self, name: str) -> None:
         try:
             dest = fetch(name)
         except (ValueError, OSError) as exc:
-            self.notify(str(exc), severity="error")
+            self.app.call_from_thread(self._download_failed, str(exc))
             return
-        self.dismiss(dest)
+        except Exception as exc:  # noqa: BLE001 - worker must never die silently
+            self.app.call_from_thread(self._download_failed, f"{exc}")
+            return
+        self.app.call_from_thread(self._download_done, dest)
+
+    def _download_failed(self, message: str) -> None:
+        try:
+            self.query_one("#download-name", Input).disabled = False
+        except Exception:  # noqa: BLE001 - screen may be gone; notify anyway
+            pass
+        try:
+            self.query_one("#dl-status", Static).update(
+                f"Download failed: {message}"
+            )
+        except Exception:  # noqa: BLE001 - screen may be gone; notify anyway
+            pass
+        self.notify(message or "Download failed", severity="error")
+
+    def _download_done(self, dest: Path) -> None:
+        try:
+            self.dismiss(dest)
+        except Exception:  # noqa: BLE001 - screen already closed (Esc)
+            self.notify(f"Downloaded {dest.name} (screen already closed)")
 
     def action_cancel(self) -> None:
         self.dismiss(None)

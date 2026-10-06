@@ -29,9 +29,12 @@ def is_valid_font(path: Path) -> tuple[bool, str]:
     if not path.is_file():
         return False, "not a regular file"
     try:
-        header = path.read_bytes()[:4]
+        header = None
+        with open(path, "rb") as handle:
+            header = handle.read(4)
     except OSError as exc:
         return False, f"cannot read file: {exc}"
+    assert header is not None
     if len(header) < 4:
         return False, "file is too small to be a font"
     if header not in VALID_MAGIC:

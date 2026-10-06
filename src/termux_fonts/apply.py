@@ -139,18 +139,39 @@ def restore_original(state: dict) -> bool:
 
 def reload_settings() -> bool:
     """Ask Termux to reload settings; ``False`` when the binary is missing."""
+    global _LAST_RELOAD_OK
     binary = shutil.which("termux-reload-settings")
     if binary is None:
+        _LAST_RELOAD_OK = False
         return False
     try:
         subprocess.run([binary], check=True)
     except FileNotFoundError:
+        _LAST_RELOAD_OK = False
         return False
     except subprocess.CalledProcessError:
+        _LAST_RELOAD_OK = False
         return False
     except OSError:
+        _LAST_RELOAD_OK = False
         return False
+    _LAST_RELOAD_OK = True
     return True
+
+
+_LAST_RELOAD_OK: bool | None = None
+
+#: Hint printed when a font was installed but Termux could not be asked to
+#: reload (spec manual step: restart the Termux app).
+MANUAL_RESTART_HINT = (
+    "termux-reload-settings not available; "
+    "restart the Termux app to apply the font"
+)
+
+
+def last_reload_ok() -> bool | None:
+    """Return the last :func:`reload_settings` result (``None`` if never run)."""
+    return _LAST_RELOAD_OK
 
 
 def is_preview_dirty(state: dict) -> bool:

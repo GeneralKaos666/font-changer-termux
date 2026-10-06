@@ -62,7 +62,10 @@ class TermuxFontsApp(App):
     def action_quit_app(self) -> None:
         picker = self._picker()
         if picker is not None and apply.is_preview_dirty(picker.state):
-            apply.restore_original(picker.state)
+            try:
+                apply.restore_original(picker.state)
+            except OSError:
+                pass
         self.exit()
 
 
@@ -116,21 +119,31 @@ def main(argv: list[str] | None = None) -> None:
     ensure_builtin_seed()
     parser = _build_parser()
     args = parser.parse_args(argv)
+    entries = scan.list_library()
     if args.list:
-        for entry in scan.list_library():
+        for entry in entries:
             print(entry.name)
         return
     if args.apply is not None:
-        match = next(
-            (e for e in scan.list_library() if e.name == args.apply), None
-        )
-        if match is None:
-            parser.error(f"unknown font: {args.apply!r}")
+        exact = [e for e in entries if e.name == args.apply]
+        if len(exact) == 1:
+            match = exact[0]
+        else:
+            lowered = args.apply.casefold()
+            ci = [e for e in entries if e.name.casefold() == lowered]
+            if not ci:
+                parser.error(f"unknown font: {args.apply!r}")
+            if len(ci) > 1:
+                names = ", ".join(e.name for e in ci)
+                parser.error(f"ambiguous font {args.apply!r}; matches: {names}")
+            match = ci[0]
         try:
             target = apply.install_font(match.path, args.slot)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
+        if apply.last_reload_ok() is False:
+            print(f"warning: {apply.MANUAL_RESTART_HINT}", file=sys.stderr)
         print(f"Applied {match.name} to {args.slot} ({target})")
         return
     TermuxFontsApp().run()

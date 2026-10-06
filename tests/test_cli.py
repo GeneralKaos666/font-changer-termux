@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from termux_fonts import apply, app, paths
 
 
@@ -58,6 +60,40 @@ def test_cli_apply_copies_and_reloads(tmp_path, monkeypatch):
     _make_font(lib / "Chosen.ttf", family="Chosen")
     monkeypatch.setattr("sys.argv", ["termux-fonts", "--apply", "Chosen.ttf"])
     app.main()
+    target = paths.font_slot_path("regular")
+    assert target.is_file()
+    assert target.read_bytes() == (lib / "Chosen.ttf").read_bytes()
+
+
+def test_cli_apply_unknown_font_exit_2(tmp_path, monkeypatch, capsys):
+    _use_termux_home(tmp_path, monkeypatch)
+    lib = paths.fonts_dir()
+    lib.mkdir(parents=True)
+    _make_font(lib / "Alpha.ttf", family="Alpha")
+    with pytest.raises(SystemExit) as exc:
+        app.main(["--apply", "Nope.ttf"])
+    assert exc.value.code == 2
+
+
+def test_cli_apply_invalid_font_exit_1(tmp_path, monkeypatch, capsys):
+    _use_termux_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(apply, "reload_settings", lambda: True)
+    lib = paths.fonts_dir()
+    lib.mkdir(parents=True)
+    (lib / "Bad.ttf").write_bytes(b"not a font")
+    with pytest.raises(SystemExit) as exc:
+        app.main(["--apply", "Bad.ttf"])
+    assert exc.value.code == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_cli_apply_case_insensitive(tmp_path, monkeypatch, capsys):
+    _use_termux_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(apply, "reload_settings", lambda: True)
+    lib = paths.fonts_dir()
+    lib.mkdir(parents=True)
+    _make_font(lib / "Chosen.ttf", family="Chosen")
+    app.main(["--apply", "chosen.ttf"])
     target = paths.font_slot_path("regular")
     assert target.is_file()
     assert target.read_bytes() == (lib / "Chosen.ttf").read_bytes()
