@@ -8,7 +8,7 @@ for scripting.
 
 ```bash
 go build ./...
-go build -o /tmp/termux-fonts-go ./cmd/termux-fonts
+go build -o $PREFIX/tmp/termux-fonts-go ./cmd/termux-fonts
 ```
 
 Requires Go >= 1.26 (pinned via `golang.org/x/image v0.46.0` and the
@@ -16,7 +16,7 @@ Bubble Tea stack). Uses `~/.termux` for fonts and settings; point it
 elsewhere for testing with `TERMUX_HOME`:
 
 ```bash
-TERMUX_HOME=/tmp/fc-go-demo /tmp/termux-fonts-go --list
+TERMUX_HOME=$PREFIX/tmp/fc-go-demo $PREFIX/tmp/termux-fonts-go --list
 ```
 
 ## Usage

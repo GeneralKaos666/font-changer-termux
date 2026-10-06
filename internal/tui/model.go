@@ -28,8 +28,6 @@ import (
 // FilterMsg sets the list filter to its value and narrows visible items.
 type FilterMsg string
 
-type filterMsg = FilterMsg
-
 type downloadStartMsg struct{ name string }
 
 type downloadProgressMsg float64

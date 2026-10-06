@@ -80,3 +80,19 @@ func TestSeed_NoSeedWhenLibraryNonEmpty(t *testing.T) {
 		t.Fatalf("ensureBuiltinSeed = %q, want empty (library non-empty)", got)
 	}
 }
+
+func TestRealMain_ApplyEmptyIsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TERMUX_HOME", dir)
+	if got := realMain([]string{"--apply", ""}); got != 2 {
+		t.Fatalf("realMain(--apply \"\") = %d, want 2 (unknown font, matching Python)", got)
+	}
+}
+
+func TestRealMain_ApplyUnknownIsExit2(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TERMUX_HOME", dir)
+	if got := realMain([]string{"--apply", "nope.ttf"}); got != 2 {
+		t.Fatalf("realMain(--apply nope.ttf) = %d, want 2", got)
+	}
+}

@@ -149,7 +149,13 @@ func realMain(argv []string) int {
 		runList(entries)
 		return 0
 	}
-	if *applyName != "" {
+	applyGiven := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "apply" {
+			applyGiven = true
+		}
+	})
+	if applyGiven {
 		return runApply(entries, *applyName, *slot)
 	}
 	if _, err := tea.NewProgram(tui.InitialModel()).Run(); err != nil {
