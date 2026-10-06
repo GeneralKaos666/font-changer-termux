@@ -15,6 +15,16 @@ func writeTemp(t *testing.T, name string, data []byte) string {
 	return p
 }
 
+func TestIsValidFont_AcceptsValid(t *testing.T) {
+	// Parked finding (Task 2): no positive fixture existed. The minimal
+	// sfnt under ../apply/testdata (built with fontTools) proves the
+	// accept path; apply preview/install tests depend on it too.
+	ok, reason := IsValidFont("../apply/testdata/a.ttf")
+	if !ok {
+		t.Fatalf("expected valid fixture to be accepted, got reason %q", reason)
+	}
+}
+
 func TestIsValidFont_RejectsGarbage(t *testing.T) {
 	p := writeTemp(t, "bad.ttf", []byte("not a font"))
 	ok, reason := IsValidFont(p)
