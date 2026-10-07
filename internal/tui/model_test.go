@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"termux-fonts-go/internal/apply"
 	"termux-fonts-go/internal/paths"
@@ -374,4 +375,30 @@ func TestPrompt_InjectedLinesAppear(t *testing.T) {
 func TestMain(m *testing.M) {
 	capturePromptLines = func() []string { return nil }
 	os.Exit(m.Run())
+}
+
+func TestTruncateCells_WidthAware(t *testing.T) {
+	if got := truncateCells("AaBbCc", 4); got != "AaB…" {
+		t.Fatalf("ascii: got %q", got)
+	}
+	if got := truncateCells("日本語ab", 4); got != "日…" {
+		t.Fatalf("wide: got %q", got)
+	}
+	if got := truncateCells("hi", 10); got != "hi" {
+		t.Fatalf("short: got %q", got)
+	}
+}
+
+func TestLayout_TilesTerminalHeight(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	m.width, m.height = 100, 40
+	m.sizeWidgets()
+	view := m.View()
+	if h := lipgloss.Height(view); h != 40 {
+		t.Fatalf("view height = %d, want 40 (terminal height)", h)
+	}
 }

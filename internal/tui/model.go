@@ -140,6 +140,8 @@ type Model struct {
 	overlay     overlay
 	importInput textinput.Model
 
+	previewH int // preview content height from the weight split (0 = natural)
+
 	prompt []string // live shell prompt lines (nil → mock fallback)
 
 	applied map[string]string // library path → "● slot" badges
@@ -500,16 +502,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) sizeWidgets() {
-	// Vertical split: preview box owns a fixed ~15 lines on top,
-	// the list takes the rest.
-	listH := 14
-	if m.height > 0 {
-		listH = max(m.height-20, 4)
-	}
-	listW := 88
+	// Weight split of the space below title/filter and above
+	// status/help: preview 2 : list 3. Borders add naturally on top
+	// of these content heights (never set Height on bordered styles).
+	listW, listH := 88, 14
 	if m.width > 0 {
 		listW = max(m.width-8, 30)
 	}
+	m.previewH = 0
+	if m.height > 0 {
+		avail := max(m.height-4, 4)
+		previewOuter := max(avail*2/5, 3)
+		listOuter := max(avail-previewOuter, 2)
+		m.previewH = max(previewOuter-2, 1)
+		listH = max(listOuter-2, 1)
+	}
 	m.list.SetSize(listW, listH)
+	m.delegate.width = listW
+	m.list.SetDelegate(m.delegate)
 	m.progress.Width = max(listW, 20)
 }

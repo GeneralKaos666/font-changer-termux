@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"termux-fonts-go/internal/paths"
 	"termux-fonts-go/internal/scan"
@@ -72,7 +73,10 @@ type fontItem struct {
 func (i fontItem) FilterValue() string { return i.entry.Name }
 
 // fontDelegate renders one row with the current filter query highlighted.
-type fontDelegate struct{ query string }
+type fontDelegate struct {
+	query string
+	width int // inner content width; rows truncate to it (0 = no clamp)
+}
 
 // Height is the height of the list item.
 func (d fontDelegate) Height() int { return 2 }
@@ -90,20 +94,42 @@ func (d fontDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	if !ok {
 		return
 	}
-	title := highlightMatch(fi.entry.Name, d.query)
-	desc := lipgloss.NewStyle().Foreground(muted).Render(
-		fmt.Sprintf("%s · %s · %s", fi.entry.Family, fi.entry.Style, humanSize(fi.entry.Size)))
+	// Truncate before styling: keeps cell widths exact and avoids
+	// cutting styled output mid-escape (color bleed).
+	name := fi.entry.Name
+	if d.width > 0 {
+		room := d.width
+		if fi.badge != "" {
+			room -= runewidth.StringWidth(fi.badge) + 1
+		}
+		name = truncateCells(name, room)
+	}
+	title := highlightMatch(name, d.query)
+	descPlain := fmt.Sprintf("%s · %s · %s", fi.entry.Family, fi.entry.Style, humanSize(fi.entry.Size))
+	if d.width > 0 {
+		descPlain = truncateCells(descPlain, d.width)
+	}
+	desc := lipgloss.NewStyle().Foreground(muted).Render(descPlain)
 	if fi.badge != "" {
 		title += " " + badgeStyle.Render(fi.badge)
 	}
 	if index == m.Index() {
-		title = selectedStyle.Render(fi.entry.Name)
-		desc = selectedStyle.Render(fmt.Sprintf("%s · %s · %s", fi.entry.Family, fi.entry.Style, humanSize(fi.entry.Size)))
+		title = selectedStyle.Render(name)
+		desc = selectedStyle.Render(descPlain)
 		if fi.badge != "" {
 			title += " " + selectedStyle.Render(fi.badge)
 		}
 	}
 	fmt.Fprintf(w, "%s\n%s", title, desc)
+}
+
+// truncateCells cuts s to maxW terminal cells (CJK/emoji aware,
+// ANSI-escape aware), appending "…" when shortened.
+func truncateCells(s string, maxW int) string {
+	if maxW <= 0 {
+		return ""
+	}
+	return runewidth.Truncate(s, maxW, "…")
 }
 
 // highlightMatch bolds the first case-insensitive occurrence of query.
@@ -127,40 +153,21 @@ func humanSize(n int64) string {
 	return fmt.Sprintf("%.0f KB", float64(n)/1024)
 }
 
-// PreviewPane renders the rich preview: large sample, Nerd/powerline
-// coverage row, file info and slot + backup status.
-func (m Model) PreviewPane() string {
-	var b strings.Builder
-	b.WriteString(sampleStyle.Render("AaBbCc 0123456789") + "\n")
-	b.WriteString("AaBbCcDdEeFfGg 0123456789 !?#@%\n")
-	b.WriteString("Nerd/powerline coverage:\n")
-	b.WriteString("  \ue0a0 \ue0a1 \ue0a2 \u03b3 \u03bb \u2211 \u2192 \u2713  \n")
+// boxInnerWidth is the content width inside a full-width bordered box.
+func (m Model) boxInnerWidth() int {
+	w := m.width
+	if w <= 0 {
+		w = 96
+	}
+	return max(max(w-4, 30)-4, 10)
+}
 
-	e, ok := m.selectedEntry()
-	if !ok {
-		b.WriteString("\nNo font selected.\n")
-	} else {
-		fmt.Fprintf(&b, "\n%s\n%s · %s · %s\n", e.Name, e.Family, e.Style, humanSize(e.Size))
-		if d, err := scan.Describe(e.Path); err == nil {
-			ver := d.Version
-			if ver == "" {
-				ver = "—"
-			}
-			fmt.Fprintf(&b, "%d glyphs · %d UPM · %s\n", d.Glyphs, d.UPM, ver)
-		}
-	}
-	// Live shell prompt when captured (raw ANSI passes through, so it
-	// renders pixel-for-pixel), mock fallback otherwise. Either way the
-	// terminal's live font shows whether prompt glyphs survive the
-	// previewed typeface.
-	if len(m.prompt) > 0 {
-		for _, ln := range m.prompt {
-			b.WriteString(ln + "\n")
-		}
-	} else {
-		b.WriteString(promptStyle.Render("╭─[user 󰀲 host]─[~/demo] main") + "\n")
-		b.WriteString(promptStyle.Render("╰─❯ AaBbCcDdEe") + "\n")
-	}
+// PreviewPane renders the rich preview: large sample, Nerd/powerline
+// coverage row, file info and slot + backup status. Every line is
+// truncated to the box width (cell-aware) and, when the model carries a
+// target preview height, padded to fill it exactly.
+func (m Model) PreviewPane() string {
+	inner := m.boxInnerWidth()
 	slotFile := paths.SlotFiles[m.slot]
 	backup := "no backup yet"
 	if m.state != nil && m.state.BackedUp[m.slot] {
@@ -170,11 +177,52 @@ func (m Model) PreviewPane() string {
 	if e, ok := m.selectedEntry(); ok {
 		preview = e.Name
 	}
-	fmt.Fprintf(&b, "\n%s ← %s • %s", slotFile, preview, backup)
+	slotLine := fmt.Sprintf("%s ← %s • %s", slotFile, preview, backup)
 	if m.Dirty() {
-		b.WriteString(" • preview — Enter keeps, Esc restores")
+		slotLine += " • preview — Enter keeps, Esc restores"
 	}
-	return b.String()
+	raw := []string{truncateCells(slotLine, inner), "AaBbCc 0123456789", "AaBbCcDdEeFfGg 0123456789 !?#@%", "Nerd/powerline coverage:", "  \ue0a0 \ue0a1 \ue0a2 \u03b3 \u03bb \u2211 \u2192 \u2713  "}
+	lines := []string{sampleStyle.Render(truncateCells(raw[1], inner))}
+	for _, ln := range raw[2:] {
+		lines = append(lines, truncateCells(ln, inner))
+	}
+	lines = append([]string{truncateCells(raw[0], inner)}, lines...)
+
+	e, ok := m.selectedEntry()
+	if !ok {
+		lines = append(lines, "", "No font selected.")
+	} else {
+		lines = append(lines, "", truncateCells(e.Name, inner),
+			truncateCells(fmt.Sprintf("%s · %s · %s", e.Family, e.Style, humanSize(e.Size)), inner))
+		if d, err := scan.Describe(e.Path); err == nil {
+			ver := d.Version
+			if ver == "" {
+				ver = "—"
+			}
+			lines = append(lines, truncateCells(fmt.Sprintf("%d glyphs · %d UPM · %s", d.Glyphs, d.UPM, ver), inner))
+		}
+	}
+	// Live shell prompt when captured (raw ANSI passes through, so it
+	// renders pixel-for-pixel), mock fallback otherwise. Either way the
+	// terminal's live font shows whether prompt glyphs survive the
+	// previewed typeface.
+	if len(m.prompt) > 0 {
+		for _, ln := range m.prompt {
+			// Re-append a reset: truncation may cut the line's own one.
+			lines = append(lines, truncateCells(ln, inner)+"\x1b[0m")
+		}
+	} else {
+		lines = append(lines, promptStyle.Render(truncateCells("╭─[user 󰀲 host]─[~/demo] main", inner)))
+		lines = append(lines, promptStyle.Render(truncateCells("╰─❯ AaBbCcDdEe", inner)))
+	}
+	lines = append(lines, "")
+	for len(lines) < m.previewH {
+		lines = append(lines, "")
+	}
+	if m.previewH > 0 && len(lines) > m.previewH {
+		lines = lines[:m.previewH]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // gradientTitle renders the title with a restrained two-stop gradient.
