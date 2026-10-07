@@ -114,3 +114,26 @@ func TestListLibrary_SortTieBreak(t *testing.T) {
 		t.Fatalf("expected deterministic [A.TTF a.ttf], got %v", names)
 	}
 }
+
+func TestDescribe_ValidFixture(t *testing.T) {
+	d, err := Describe("../../internal/apply/testdata/a.ttf")
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if d.Glyphs <= 0 {
+		t.Fatalf("Glyphs = %d, want > 0", d.Glyphs)
+	}
+	if d.UPM <= 0 {
+		t.Fatalf("UPM = %d, want > 0", d.UPM)
+	}
+}
+
+func TestDescribe_InvalidRejected(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "bad.ttf")
+	if err := os.WriteFile(p, []byte("not a font"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Describe(p); err == nil {
+		t.Fatal("expected error for garbage, got nil")
+	}
+}

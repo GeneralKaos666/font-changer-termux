@@ -22,6 +22,7 @@ func (m *Model) rescan() {
 		return
 	}
 	m.entries = entries
+	m.applied = appliedBadges(entries)
 	m.refreshItems()
 }
 

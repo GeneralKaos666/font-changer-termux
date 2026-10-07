@@ -23,6 +23,32 @@ type FontEntry struct {
 	Style  string
 }
 
+// FontDetails carries display metadata parsed from a font's tables.
+type FontDetails struct {
+	Glyphs  int
+	UPM     int32
+	Version string
+}
+
+// Describe parses tables for display metadata. Garbage in, error out.
+func Describe(path string) (FontDetails, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return FontDetails{}, err
+	}
+	font, err := sfnt.Parse(data)
+	if err != nil {
+		return FontDetails{}, err
+	}
+	var buf sfnt.Buffer
+	version, _ := font.Name(&buf, sfnt.NameIDVersion)
+	return FontDetails{
+		Glyphs:  font.NumGlyphs(),
+		UPM:     int32(font.UnitsPerEm()),
+		Version: version,
+	}, nil
+}
+
 // familyStyle returns (family, style) from the font's name table,
 // preferring typographic names (IDs 16/17) over legacy ones (IDs 1/2).
 // It falls back to the filename stem / "Regular" when the font cannot be

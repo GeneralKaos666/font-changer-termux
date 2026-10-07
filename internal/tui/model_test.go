@@ -261,3 +261,67 @@ func TestDownload_DismissIgnoresLateDone(t *testing.T) {
 		t.Fatalf("stale done overwrote status: %q", got)
 	}
 }
+
+func TestPreviewPane_ShowsDetailsAndPrompt(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	pane := m.PreviewPane()
+	for _, want := range []string{"glyphs", "UPM", "❯"} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("preview pane missing %q:\n%s", want, pane)
+		}
+	}
+}
+
+func TestView_PreviewAboveList(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	m.width, m.height = 100, 40
+	m.sizeWidgets()
+	view := m.View()
+	entries := m.VisibleEntries()
+	if len(entries) < 2 {
+		t.Fatalf("want >= 2 visible entries, got %d", len(entries))
+	}
+	// entries[0] is highlighted AND shown in the preview pane; entries[1]
+	// appears only in the list. Order must be: preview, filter counts, list.
+	sample := strings.Index(view, "AaBbCc")
+	counts := strings.Index(view, "2/2")
+	second := strings.Index(view, entries[1].Name)
+	if sample < 0 || counts < 0 || second < 0 {
+		t.Fatalf("missing section (sample=%d counts=%d second=%d)", sample, counts, second)
+	}
+	if !(sample < counts && counts < second) {
+		t.Fatalf("wrong vertical order (sample=%d counts=%d second=%d)", sample, counts, second)
+	}
+}
+
+func TestList_ShowsAppliedBadge(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+	// Make the regular slot byte-identical to the library font.
+	src, err := os.ReadFile(filepath.Join(paths.FontsDir(), "Hack.ttf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := paths.FontSlotPath("regular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(slot, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel()
+	view := m.View()
+	if !strings.Contains(view, "● regular") {
+		t.Fatalf("list missing applied badge:\n%s", view)
+	}
+}

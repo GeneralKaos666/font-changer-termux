@@ -9,7 +9,9 @@
 package tui
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -22,6 +24,7 @@ import (
 
 	"termux-fonts-go/internal/apply"
 	"termux-fonts-go/internal/downloader"
+	"termux-fonts-go/internal/paths"
 	"termux-fonts-go/internal/scan"
 )
 
@@ -78,6 +81,8 @@ type Model struct {
 
 	overlay     overlay
 	importInput textinput.Model
+
+	applied map[string]string // library path → "● slot" badges
 
 	dlNames    []string
 	dlCursor   int
@@ -141,6 +146,7 @@ func NewModel() Model {
 		dlNames:     names,
 		spinner:     sp,
 		progress:    bar,
+		applied:     appliedBadges(entries),
 	}
 	m.refreshItems()
 	return m
@@ -181,13 +187,47 @@ func (m Model) selectedEntry() (scan.FontEntry, bool) {
 	return fi.entry, true
 }
 
+// appliedBadges maps library entry paths to "● slot" badges by comparing
+// file bytes with the live slot files. Size-prefiltered, so the common
+// case costs 4 slot reads and no library hashing.
+func appliedBadges(entries []scan.FontEntry) map[string]string {
+	out := map[string]string{}
+	for slot := range paths.SlotFiles {
+		target, err := paths.FontSlotPath(slot)
+		if err != nil {
+			continue
+		}
+		sb, err := os.ReadFile(target)
+		if err != nil {
+			continue
+		}
+		sh := sha256.Sum256(sb)
+		for _, e := range entries {
+			if e.Size != int64(len(sb)) {
+				continue
+			}
+			eb, err := os.ReadFile(e.Path)
+			if err != nil {
+				continue
+			}
+			if sha256.Sum256(eb) == sh {
+				if out[e.Path] != "" {
+					out[e.Path] += " "
+				}
+				out[e.Path] += "● " + slot
+			}
+		}
+	}
+	return out
+}
+
 func (m *Model) refreshItems() {
 	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 	items := make([]list.Item, 0, len(m.entries))
 	for _, e := range m.entries {
 		if q == "" || strings.Contains(strings.ToLower(e.Name), q) ||
 			strings.Contains(strings.ToLower(e.Family), q) {
-			items = append(items, fontItem{entry: e})
+			items = append(items, fontItem{entry: e, badge: m.applied[e.Path]})
 		}
 	}
 	m.list.SetItems(items)
@@ -398,13 +438,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) sizeWidgets() {
+	// Vertical split: preview box owns a fixed ~15 lines on top,
+	// the list takes the rest.
 	listH := 14
 	if m.height > 0 {
-		listH = max(m.height-12, 6)
+		listH = max(m.height-20, 4)
 	}
-	listW := 40
+	listW := 88
 	if m.width > 0 {
-		listW = max(m.width*42/100-4, 20)
+		listW = max(m.width-8, 30)
 	}
 	m.list.SetSize(listW, listH)
 	m.progress.Width = max(listW, 20)

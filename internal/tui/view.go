@@ -24,13 +24,18 @@ var (
 	statusStyle   = lipgloss.NewStyle().Foreground(muted).Padding(0, 1)
 	helpStyle     = lipgloss.NewStyle().Foreground(muted)
 	helpKeyStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	badgeStyle    = lipgloss.NewStyle().Foreground(accent)
 	sampleStyle   = lipgloss.NewStyle().Bold(true)
+	promptStyle   = lipgloss.NewStyle().Foreground(muted)
 	matchStyle    = lipgloss.NewStyle().Foreground(accent).Bold(true)
 	selectedStyle = lipgloss.NewStyle().Background(accent).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
 )
 
 // fontItem adapts scan.FontEntry to the bubbles list.
-type fontItem struct{ entry scan.FontEntry }
+type fontItem struct {
+	entry scan.FontEntry
+	badge string
+}
 
 // FilterValue is the value we use when filtering against this item.
 func (i fontItem) FilterValue() string { return i.entry.Name }
@@ -57,9 +62,15 @@ func (d fontDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	title := highlightMatch(fi.entry.Name, d.query)
 	desc := lipgloss.NewStyle().Foreground(muted).Render(
 		fmt.Sprintf("%s · %s · %s", fi.entry.Family, fi.entry.Style, humanSize(fi.entry.Size)))
+	if fi.badge != "" {
+		title += " " + badgeStyle.Render(fi.badge)
+	}
 	if index == m.Index() {
 		title = selectedStyle.Render(fi.entry.Name)
 		desc = selectedStyle.Render(fmt.Sprintf("%s · %s · %s", fi.entry.Family, fi.entry.Style, humanSize(fi.entry.Size)))
+		if fi.badge != "" {
+			title += " " + selectedStyle.Render(fi.badge)
+		}
 	}
 	fmt.Fprintf(w, "%s\n%s", title, desc)
 }
@@ -99,7 +110,18 @@ func (m Model) PreviewPane() string {
 		b.WriteString("\nNo font selected.\n")
 	} else {
 		fmt.Fprintf(&b, "\n%s\n%s · %s · %s\n", e.Name, e.Family, e.Style, humanSize(e.Size))
+		if d, err := scan.Describe(e.Path); err == nil {
+			ver := d.Version
+			if ver == "" {
+				ver = "—"
+			}
+			fmt.Fprintf(&b, "%d glyphs · %d UPM · %s\n", d.Glyphs, d.UPM, ver)
+		}
 	}
+	// Mock shell prompt: static text, so the terminal's live font shows
+	// whether prompt + powerline glyphs survive the previewed typeface.
+	b.WriteString(promptStyle.Render("╭─[user 󰀲 host]─[~/demo] main") + "\n")
+	b.WriteString(promptStyle.Render("╰─❯ AaBbCcDdEe") + "\n")
 	slotFile := paths.SlotFiles[m.slot]
 	backup := "no backup yet"
 	if m.state != nil && m.state.BackedUp[m.slot] {
@@ -154,32 +176,30 @@ func helpBar() string {
 	return helpStyle.Render(strings.Join(parts, " · "))
 }
 
-// View renders title, filter, list (42%) + preview (58%), overlays,
-// status and help — all TTY-free.
+// View renders title, preview (top half) + filter/list (bottom half),
+// overlays, status and help — all TTY-free.
 func (m Model) View() string {
 	w := m.width
 	if w <= 0 {
 		w = 96
 	}
-	listW := max(w*42/100-4, 20)
-	prevW := max(w-listW-8, 30)
 
 	title := titleStyle.Render(gradientTitle("termux-fonts")) + slotStyle.Render("slot: "+m.slot)
 	filterLine := m.filter.View() + statusStyle.Render(fmt.Sprintf("  %d/%d", len(m.VisibleEntries()), len(m.entries)))
+
+	preview := boxStyle.Width(max(w-4, 30)).Render(m.PreviewPane())
 
 	listContent := statusStyle.Render("No fonts in library — press i to import, d to download.")
 	if len(m.list.Items()) > 0 {
 		listContent = m.list.View()
 	}
-	cols := lipgloss.JoinHorizontal(lipgloss.Top,
-		boxStyle.Width(listW).Render(listContent),
-		boxStyle.Width(prevW).Render(m.PreviewPane()),
-	)
+	fonts := boxStyle.Width(max(w-4, 30)).Render(listContent)
 
 	var b strings.Builder
 	b.WriteString(title + "\n")
+	b.WriteString(preview + "\n")
 	b.WriteString(filterLine + "\n")
-	b.WriteString(cols + "\n")
+	b.WriteString(fonts + "\n")
 
 	if m.overlay == overlayImport {
 		b.WriteString(boxStyle.Render("Import font path:\n"+m.importInput.View()) + "\n")
