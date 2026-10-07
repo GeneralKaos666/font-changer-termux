@@ -1,22 +1,29 @@
-# termux-fonts (Go / Bubble Tea port)
+# termux-fonts
 
-A Bubble Tea TUI to change the Termux terminal font, with backup-once
-preview/commit/restore, font import, Nerd Font download, and CLI flags
-for scripting.
+A Bubble Tea TUI to change the Termux terminal font, with live preview,
+backup-once preview/commit/restore, font import, Nerd Font download, and
+CLI flags for scripting.
 
-## Build
+The picker dresses itself in your Termux palette and shows your real
+shell prompt in every candidate font — what you see is what you get.
+
+## Install
+
+Requires Go >= 1.26.
 
 ```bash
-go build ./...
-go build -o $PREFIX/tmp/termux-fonts-go ./cmd/termux-fonts
+go install github.com/GeneralKaos666/font-changer-termux/cmd/termux-fonts@latest
 ```
 
-Requires Go >= 1.26 (pinned via `golang.org/x/image v0.46.0` and the
-Bubble Tea stack). Uses `~/.termux` for fonts and settings; point it
-elsewhere for testing with `TERMUX_HOME`:
+Make sure `$(go env GOPATH)/bin` is on your `PATH` (or
+`GOBIN=$PREFIX/bin go install ...` to drop the binary straight into
+Termux's `bin`).
+
+Uses `~/.termux` for fonts and settings; point it elsewhere for testing
+with `TERMUX_HOME`:
 
 ```bash
-TERMUX_HOME=$PREFIX/tmp/fc-go-demo $PREFIX/tmp/termux-fonts-go --list
+TERMUX_HOME=$PREFIX/tmp/fc-go-demo termux-fonts --list
 ```
 
 ## Usage
@@ -26,6 +33,12 @@ Launch the interactive picker:
 ```bash
 termux-fonts
 ```
+
+The preview pane (top) shows a sample block, Nerd/powerline coverage,
+real font metadata (glyph count, UPM, version), your live shell prompt,
+and slot + backup status. The font list (bottom) marks applied fonts
+with a `● slot` badge. The list is focused on launch — arrows move
+immediately, `Tab` reaches the filter box.
 
 Non-interactive use (also handy for scripts):
 
@@ -57,6 +70,14 @@ available.
 Highlighting a font only updates the info pane — nothing is applied
 until you preview (Space/`p`) or commit (Enter).
 
+## Theming
+
+On startup the TUI reads `~/.termux/colors.properties` (if present) and
+themes itself: background/foreground for chrome text, accent from
+`color12` (fallback `color4`), muted from `color8`. Set a palette with
+[termux-colors](https://github.com/GeneralKaos666/color-changer-termux)
+and this picker follows it.
+
 ## Backups
 
 The first install or preview for a slot copies the previous slot file
@@ -74,9 +95,8 @@ TUI and the `--list` / `--apply` paths.
 
 ## Note: Python version discarded
 
-An earlier Python/Textual implementation of this tool lived on this
+An earlier Python/Textual implementation of this tool lived in this
 repo's history (and briefly on a `python-main` branch, now deleted).
-It is superseded by this Go port and will not be maintained — the
-`src/termux_fonts/` tree is gone from `main`. If you need the old code,
-it remains reachable in history before the Go commits
-(`git log --all -- src/termux_fonts/`).
+It is superseded by this Go port and will not be maintained. If you
+need the old code, it remains reachable in history before the Go
+commits (`git log --all -- src/termux_fonts/`).
