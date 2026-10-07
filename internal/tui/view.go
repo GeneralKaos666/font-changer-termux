@@ -11,6 +11,7 @@ import (
 
 	"termux-fonts-go/internal/paths"
 	"termux-fonts-go/internal/scan"
+	"termux-fonts-go/internal/theme"
 )
 
 // Restrained palette: accent + muted + default foreground only.
@@ -18,18 +19,48 @@ var (
 	accent = lipgloss.AdaptiveColor{Light: "#5B50E6", Dark: "#A49EFF"}
 	muted  = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#8E8E96"}
 
-	titleStyle    = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	slotStyle     = lipgloss.NewStyle().Foreground(muted)
-	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1)
-	statusStyle   = lipgloss.NewStyle().Foreground(muted).Padding(0, 1)
-	helpStyle     = lipgloss.NewStyle().Foreground(muted)
-	helpKeyStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
-	badgeStyle    = lipgloss.NewStyle().Foreground(accent)
-	sampleStyle   = lipgloss.NewStyle().Bold(true)
-	promptStyle   = lipgloss.NewStyle().Foreground(muted)
-	matchStyle    = lipgloss.NewStyle().Foreground(accent).Bold(true)
-	selectedStyle = lipgloss.NewStyle().Background(accent).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+	titleStyle    lipgloss.Style
+	slotStyle     lipgloss.Style
+	boxStyle      lipgloss.Style
+	statusStyle   lipgloss.Style
+	helpStyle     lipgloss.Style
+	helpKeyStyle  lipgloss.Style
+	badgeStyle    lipgloss.Style
+	sampleStyle   lipgloss.Style
+	promptStyle   lipgloss.Style
+	matchStyle    lipgloss.Style
+	selectedStyle lipgloss.Style
 )
+
+func init() { applyTheme(theme.Palette{}) }
+
+// applyTheme re-points the palette and rebuilds every derived style.
+// Empty palette fields keep the built-in defaults, so a missing or
+// partial colors.properties never breaks the look.
+func applyTheme(p theme.Palette) {
+	if p.Accent != "" {
+		accent = lipgloss.AdaptiveColor{Light: p.Accent, Dark: p.Accent}
+	}
+	if p.Muted != "" {
+		muted = lipgloss.AdaptiveColor{Light: p.Muted, Dark: p.Muted}
+	}
+	fg := lipgloss.NoColor{}
+	var fgColor lipgloss.TerminalColor = fg
+	if p.Foreground != "" {
+		fgColor = lipgloss.Color(p.Foreground)
+	}
+	titleStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Foreground(fgColor)
+	slotStyle = lipgloss.NewStyle().Foreground(muted)
+	boxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1)
+	statusStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(fgColor)
+	helpStyle = lipgloss.NewStyle().Foreground(muted)
+	helpKeyStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	sampleStyle = lipgloss.NewStyle().Bold(true).Foreground(fgColor)
+	promptStyle = lipgloss.NewStyle().Foreground(muted)
+	matchStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	selectedStyle = lipgloss.NewStyle().Background(accent).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+	badgeStyle = lipgloss.NewStyle().Foreground(accent)
+}
 
 // fontItem adapts scan.FontEntry to the bubbles list.
 type fontItem struct {
@@ -118,10 +149,18 @@ func (m Model) PreviewPane() string {
 			fmt.Fprintf(&b, "%d glyphs · %d UPM · %s\n", d.Glyphs, d.UPM, ver)
 		}
 	}
-	// Mock shell prompt: static text, so the terminal's live font shows
-	// whether prompt + powerline glyphs survive the previewed typeface.
-	b.WriteString(promptStyle.Render("╭─[user 󰀲 host]─[~/demo] main") + "\n")
-	b.WriteString(promptStyle.Render("╰─❯ AaBbCcDdEe") + "\n")
+	// Live shell prompt when captured (raw ANSI passes through, so it
+	// renders pixel-for-pixel), mock fallback otherwise. Either way the
+	// terminal's live font shows whether prompt glyphs survive the
+	// previewed typeface.
+	if len(m.prompt) > 0 {
+		for _, ln := range m.prompt {
+			b.WriteString(ln + "\n")
+		}
+	} else {
+		b.WriteString(promptStyle.Render("╭─[user 󰀲 host]─[~/demo] main") + "\n")
+		b.WriteString(promptStyle.Render("╰─❯ AaBbCcDdEe") + "\n")
+	}
 	slotFile := paths.SlotFiles[m.slot]
 	backup := "no backup yet"
 	if m.state != nil && m.state.BackedUp[m.slot] {

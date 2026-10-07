@@ -9,11 +9,15 @@
 package tui
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/progress"
@@ -26,6 +30,7 @@ import (
 	"termux-fonts-go/internal/downloader"
 	"termux-fonts-go/internal/paths"
 	"termux-fonts-go/internal/scan"
+	"termux-fonts-go/internal/theme"
 )
 
 // FilterMsg sets the list filter to its value and narrows visible items.
@@ -54,8 +59,61 @@ const (
 	overlayDownload
 )
 
+// capturePromptLines renders the user's live shell prompt (with colors)
+// once per session. Anything failing — unknown shell, timeout, empty
+// output — yields nil and the caller falls back to the mock prompt.
+var capturePromptLines = defaultCapturePromptLines
+
+func defaultCapturePromptLines() []string {
+	shell := os.Getenv("SHELL")
+	var argv []string
+	switch {
+	case strings.HasSuffix(shell, "zsh"):
+		argv = []string{shell, "-ic", `print -P "$PROMPT"`}
+	case strings.HasSuffix(shell, "bash"):
+		argv = []string{shell, "-ic", `echo "${PS1@P}"`}
+	default:
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+	var lines []string
+	for _, ln := range strings.Split(buf.String(), "\n") {
+		ln = strings.TrimRight(ln, " \t")
+		if ln == "" {
+			continue
+		}
+		if r := []rune(ln); len(r) > 200 {
+			ln = string(r[:200])
+		}
+		lines = append(lines, ln)
+		if len(lines) == 2 {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return lines
+}
+
 // slotOrder is the fixed s-key cycle.
 var slotOrder = []string{"regular", "bold", "italic", "bold-italic"}
+
+// themePalette loads the Termux palette; any failure means defaults.
+func themePalette() theme.Palette {
+	p, err := theme.LoadFile(paths.TermuxDir() + "/colors.properties")
+	if err != nil {
+		return theme.Palette{}
+	}
+	return p
+}
 
 // listLibrary and restoreOriginal are package-level vars (rather than
 // direct calls) so tests can inject load/restore failures TTY-free.
@@ -81,6 +139,8 @@ type Model struct {
 
 	overlay     overlay
 	importInput textinput.Model
+
+	prompt []string // live shell prompt lines (nil → mock fallback)
 
 	applied map[string]string // library path → "● slot" badges
 
@@ -134,6 +194,7 @@ func NewModel() Model {
 	}
 	sort.Strings(names)
 
+	applyTheme(themePalette())
 	m := Model{
 		entries:     entries,
 		list:        l,
@@ -147,6 +208,7 @@ func NewModel() Model {
 		spinner:     sp,
 		progress:    bar,
 		applied:     appliedBadges(entries),
+		prompt:      capturePromptLines(),
 	}
 	m.refreshItems()
 	return m

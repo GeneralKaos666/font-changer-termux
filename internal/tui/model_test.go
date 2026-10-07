@@ -325,3 +325,53 @@ func TestList_ShowsAppliedBadge(t *testing.T) {
 		t.Fatalf("list missing applied badge:\n%s", view)
 	}
 }
+
+func TestTheme_MissingPaletteKeepsDefaults(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	// No colors.properties in TERMUX_HOME → defaults, no crash.
+	m := NewModel()
+	if m.status != "" && strings.Contains(m.status, "Theme") {
+		t.Fatalf("unexpected theme status: %q", m.status)
+	}
+	view := m.View()
+	if !strings.Contains(view, "Hack.ttf") {
+		t.Fatal("view broken without palette")
+	}
+}
+
+func TestPrompt_FallbackOnBadShell(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+	t.Setenv("SHELL", "/nonexistent-shell-xyz")
+
+	m := NewModel()
+	pane := m.PreviewPane()
+	if !strings.Contains(pane, "❯") {
+		t.Fatalf("fallback mock prompt missing:\n%s", pane)
+	}
+}
+
+func TestPrompt_InjectedLinesAppear(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+	old := capturePromptLines
+	capturePromptLines = func() []string { return []string{"\x1b[32m╭─ injected", "╰─❯ test"} }
+	defer func() { capturePromptLines = old }()
+
+	m := NewModel()
+	if pane := m.PreviewPane(); !strings.Contains(pane, "injected") {
+		t.Fatalf("injected prompt missing:\n%s", pane)
+	}
+}
+
+// Keep NewModel hermetic: no real shell capture in tests (per-test
+// overrides still work by reassigning capturePromptLines).
+func TestMain(m *testing.M) {
+	capturePromptLines = func() []string { return nil }
+	os.Exit(m.Run())
+}
