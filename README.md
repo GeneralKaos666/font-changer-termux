@@ -71,3 +71,12 @@ If `~/.termux/fonts/` is empty but `~/.termux/font.ttf` exists, startup
 seeds the library by copying it to `~/.termux/fonts/Current.ttf`, so
 the picker is never empty on first launch. Seeding runs before both the
 TUI and the `--list` / `--apply` paths.
+
+## Note: Python version discarded
+
+An earlier Python/Textual implementation of this tool lived on this
+repo's history (and briefly on a `python-main` branch, now deleted).
+It is superseded by this Go port and will not be maintained — the
+`src/termux_fonts/` tree is gone from `main`. If you need the old code,
+it remains reachable in history before the Go commits
+(`git log --all -- src/termux_fonts/`).
