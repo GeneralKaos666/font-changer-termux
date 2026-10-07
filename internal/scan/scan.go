@@ -62,12 +62,18 @@ func isFontFile(name string) bool {
 func ListLibrary() ([]FontEntry, error) {
 	dir := paths.FontsDir()
 	fi, err := os.Stat(dir)
-	if err != nil || !fi.IsDir() {
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []FontEntry{}, nil
+		}
+		return nil, err
+	}
+	if !fi.IsDir() {
 		return []FontEntry{}, nil
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return []FontEntry{}, nil
+		return nil, err
 	}
 	out := []FontEntry{}
 	for _, e := range entries {
@@ -90,8 +96,12 @@ func ListLibrary() ([]FontEntry, error) {
 			Style:  style,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	sort.SliceStable(out, func(i, j int) bool {
+		li, lj := strings.ToLower(out[i].Name), strings.ToLower(out[j].Name)
+		if li != lj {
+			return li < lj
+		}
+		return out[i].Name < out[j].Name
 	})
 	return out, nil
 }

@@ -78,3 +78,39 @@ func TestListLibrary_Empty(t *testing.T) {
 		t.Fatalf("expected empty library, got %v", entries)
 	}
 }
+
+func TestListLibrary_ReadDirError(t *testing.T) {
+	root := useTermuxHome(t)
+	if err := os.MkdirAll(paths.FontsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(paths.FontsDir(), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(paths.FontsDir(), 0o755)
+	_ = root
+	if _, err := ListLibrary(); err == nil {
+		t.Fatal("expected error for unreadable library dir, got nil")
+	}
+}
+
+func TestListLibrary_SortTieBreak(t *testing.T) {
+	useTermuxHome(t)
+	if err := os.MkdirAll(paths.FontsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"a.ttf", "A.TTF"} {
+		writeFont(t, paths.FontsDir(), n)
+	}
+	entries, err := ListLibrary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].Name != "A.TTF" || entries[1].Name != "a.ttf" {
+		names := []string{}
+		for _, e := range entries {
+			names = append(names, e.Name)
+		}
+		t.Fatalf("expected deterministic [A.TTF a.ttf], got %v", names)
+	}
+}

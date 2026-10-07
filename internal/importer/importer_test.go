@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"termux-fonts-go/internal/importer"
+	"termux-fonts-go/internal/paths"
 )
 
 const fixture = "../apply/testdata/a.ttf"
@@ -65,5 +67,52 @@ func TestImport_InvalidRejected(t *testing.T) {
 	}
 	if _, err := importer.ImportFile(src, "error"); err == nil {
 		t.Fatal("expected error for invalid font, got nil")
+	}
+}
+
+func TestResolveClash_StatErrorPropagated(t *testing.T) {
+	t.Setenv("TERMUX_HOME", t.TempDir())
+	dir := paths.FontsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o755)
+	done := make(chan struct{})
+	var dest string
+	var err error
+	go func() {
+		defer close(done)
+		dest, err = importer.ResolveClash(filepath.Join(dir, "Hack.ttf"))
+	}()
+	select {
+	case <-done:
+		if err == nil {
+			t.Fatalf("expected stat error, got dest %s", dest)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ResolveClash hung on stat error (infinite loop)")
+	}
+}
+
+func TestImport_FailedCopyLeavesNoTemp(t *testing.T) {
+	t.Setenv("TERMUX_HOME", t.TempDir())
+	dir := paths.FontsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := stage(t, "Src.ttf")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o755)
+	if _, err := importer.ImportFile(src, "replace"); err == nil {
+		t.Fatal("expected copy error in read-only dir")
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(dir, ".import-*.part"))
+	if len(leftovers) != 0 {
+		t.Fatalf("temp leftovers: %v", leftovers)
 	}
 }

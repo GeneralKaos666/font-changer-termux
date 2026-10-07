@@ -35,14 +35,19 @@ func wrapOSError(where string, err error) error {
 }
 
 // ResolveClash returns the first free "<stem>-N<suffix>" sibling of dest.
-func ResolveClash(dest string) string {
+// Stat errors other than "not exist" (e.g. permission denied) are
+// returned instead of looping forever.
+func ResolveClash(dest string) (string, error) {
 	ext := filepath.Ext(dest)
 	stem := strings.TrimSuffix(filepath.Base(dest), ext)
 	dir := filepath.Dir(dest)
 	for i := 1; ; i++ {
 		candidate := filepath.Join(dir, fmt.Sprintf("%s-%d%s", stem, i, ext))
-		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
-			return candidate
+		if _, err := os.Stat(candidate); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return candidate, nil
+			}
+			return "", err
 		}
 	}
 }
@@ -78,7 +83,11 @@ func ImportFile(src, clash string) (string, error) {
 		case "error":
 			return "", fmt.Errorf("font already in library: %s", filepath.Base(dest))
 		case "keep-both":
-			dest = ResolveClash(dest)
+			var err error
+			dest, err = ResolveClash(dest)
+			if err != nil {
+				return "", wrapOSError(filepath.Dir(dest), err)
+			}
 		}
 	}
 	if err := copyFile(src, dest); err != nil {
@@ -102,11 +111,23 @@ func copyFile(src, dest string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	// Write to a temp sibling and rename, so an interrupted copy never
+	// leaves a truncated dest (mirrors the downloader).
+	out, err := os.CreateTemp(filepath.Dir(dest), ".import-*.part")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	tmp := out.Name()
+	defer os.Remove(tmp)
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dest)
 }

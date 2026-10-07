@@ -80,10 +80,10 @@ func (m *Model) doCommit() {
 
 // fetchCmd downloads a Nerd Font off the Elm loop; completion (or any
 // error) returns as a downloadDoneMsg, never a crash.
-func fetchCmd(name string) tea.Cmd {
+func fetchCmd(name string, gen int) tea.Cmd {
 	return func() tea.Msg {
 		dest, err := downloader.Fetch(name, false)
-		return downloadDoneMsg{path: dest, err: err}
+		return downloadDoneMsg{path: dest, err: err, gen: gen}
 	}
 }
 

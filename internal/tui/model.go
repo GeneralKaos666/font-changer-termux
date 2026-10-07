@@ -35,6 +35,7 @@ type downloadProgressMsg float64
 type downloadDoneMsg struct {
 	path string
 	err  error
+	gen  int
 }
 
 type importDoneMsg struct {
@@ -83,6 +84,7 @@ type Model struct {
 	dlActive   bool
 	dlName     string
 	dlProgress float64
+	dlGen      int
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -206,19 +208,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshItems()
 		return m, nil
 	case downloadStartMsg:
+		m.dlGen++
 		m.dlActive = true
 		m.dlName = msg.name
 		m.dlProgress = 0
 		// Fetch reports no byte fractions, so the bar is an activity
 		// indicator: say so instead of implying measured progress.
 		m.status = fmt.Sprintf("Downloading %s… (no progress info)", msg.name)
-		return m, tea.Batch(fetchCmd(msg.name), m.spinner.Tick)
+		return m, tea.Batch(fetchCmd(msg.name, m.dlGen), m.spinner.Tick)
 	case downloadProgressMsg:
 		m.dlProgress = clamp01(float64(msg))
 		return m, nil
 	case downloadDoneMsg:
 		m.dlActive = false
 		m.dlProgress = 0
+		if msg.gen != m.dlGen {
+			// Orphaned by a dismiss: refresh the list quietly without
+			// claiming a download the user was told was dismissed.
+			m.rescan()
+			return m, nil
+		}
 		m.overlay = overlayNone
 		if msg.err != nil {
 			m.status = "Download failed: " + msg.err.Error()
@@ -283,6 +292,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay == overlayDownload {
 		switch key {
 		case "esc", "q":
+			if m.dlActive {
+				// The fetch cannot be cancelled mid-flight; orphan it so
+				// its late completion refreshes quietly instead of
+				// reporting a download the user dismissed.
+				m.dlGen++
+				m.dlActive = false
+				m.dlProgress = 0
+				m.overlay = overlayNone
+				m.status = "Download dismissed — finishing in background"
+				return m, nil
+			}
 			m.overlay = overlayNone
 			m.status = "Download cancelled"
 			return m, nil

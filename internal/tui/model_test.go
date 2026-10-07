@@ -153,7 +153,7 @@ func TestDownload_ShowsProgress(t *testing.T) {
 		t.Fatal("download dismissed before done")
 	}
 
-	m = updateModel(t, m, downloadDoneMsg{path: "/tmp/Hack.ttf"})
+	m = updateModel(t, m, downloadDoneMsg{path: "/tmp/Hack.ttf", gen: m.dlGen})
 	if m.Downloading() {
 		t.Fatal("downloadDoneMsg did not dismiss the download")
 	}
@@ -234,5 +234,30 @@ func TestDownload_ShowsIndeterminateStatus(t *testing.T) {
 	}
 	if got := m.View(); !strings.Contains(got, "no progress info") {
 		t.Fatal("download view does not say indeterminate")
+	}
+}
+
+func TestDownload_DismissIgnoresLateDone(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	m.overlay = overlayDownload
+	m = updateModel(t, m, downloadStartMsg{name: "Hack-Regular"})
+	if !m.Downloading() {
+		t.Fatal("download did not start")
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.Downloading() {
+		t.Fatal("esc did not dismiss active download")
+	}
+	if got := m.status; strings.Contains(got, "cancelled") {
+		t.Fatalf("dismiss overclaims cancellation: %q", got)
+	}
+	// Late completion of the orphaned fetch must not report a download.
+	m = updateModel(t, m, downloadDoneMsg{path: "/tmp/Hack.ttf", gen: m.dlGen - 1})
+	if got := m.status; strings.Contains(got, "Downloaded") {
+		t.Fatalf("stale done overwrote status: %q", got)
 	}
 }

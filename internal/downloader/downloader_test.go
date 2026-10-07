@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"termux-fonts-go/internal/downloader"
+	"termux-fonts-go/internal/paths"
 )
 
 func fontBytes(t *testing.T) []byte {
@@ -87,5 +88,39 @@ func TestFetch_NoContentLengthDownloads(t *testing.T) {
 	got, _ := os.ReadFile(dest)
 	if string(got) != string(data) {
 		t.Fatal("dest was not replaced by the download")
+	}
+}
+
+func TestFetch_HeadErrorStatusDownloads(t *testing.T) {
+	t.Setenv("TERMUX_HOME", t.TempDir())
+	data := fontBytes(t)
+	var gets int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			// 404 with a Content-Length matching local size must NOT skip.
+			w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		gets++
+		w.Write(data)
+	}))
+	defer srv.Close()
+	downloader.NerdFonts["Test404"] = srv.URL + "/Test404NerdFont.ttf"
+	defer delete(downloader.NerdFonts, "Test404")
+
+	// Pre-seed a same-size file so a naive size comparison would skip.
+	dest := filepath.Join(paths.FontsDir(), "Test404NerdFont.ttf")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, make([]byte, len(data)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := downloader.Fetch("Test404", false); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if gets != 1 {
+		t.Fatalf("gets = %d, want 1 (error HEAD must not skip download)", gets)
 	}
 }
