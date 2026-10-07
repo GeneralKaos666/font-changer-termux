@@ -1,26 +1,30 @@
 # termux-fonts
 
-A Bubble Tea TUI to change the Termux terminal font, with live preview,
-backup-once preview/commit/restore, font import, Nerd Font download, and
-CLI flags for scripting.
+Change your Termux terminal font with a friendly fullscreen picker.
+Browse your fonts, try each one live, and keep the one you love — with
+automatic backups, so you can always go back.
 
-The picker dresses itself in your Termux palette and shows your real
-shell prompt in every candidate font — what you see is what you get.
+The picker dresses itself in your Termux colors and shows your real
+shell prompt in every candidate font. What you see is what you get.
 
 ## Install
 
-Requires Go >= 1.26.
+You need [Go](https://go.dev/dl/) 1.26 or newer, then run:
 
 ```bash
 go install github.com/GeneralKaos666/font-changer-termux/cmd/termux-fonts@latest
 ```
 
-Make sure `$(go env GOPATH)/bin` is on your `PATH` (or
-`GOBIN=$PREFIX/bin go install ...` to drop the binary straight into
-Termux's `bin`).
+This puts a `termux-fonts` command on your system. If your shell can't
+find it afterwards, add Go's install folder to your `PATH`, or install
+straight into Termux's own folder instead:
 
-Uses `~/.termux` for fonts and settings; point it elsewhere for testing
-with `TERMUX_HOME`:
+```bash
+GOBIN=$PREFIX/bin go install github.com/GeneralKaos666/font-changer-termux/cmd/termux-fonts@latest
+```
+
+Want to poke around safely first? Point the tool at a throwaway folder
+so your real setup stays untouched:
 
 ```bash
 TERMUX_HOME=$PREFIX/tmp/fc-go-demo termux-fonts --list
@@ -28,75 +32,74 @@ TERMUX_HOME=$PREFIX/tmp/fc-go-demo termux-fonts --list
 
 ## Usage
 
-Launch the interactive picker:
+Open the picker:
 
 ```bash
 termux-fonts
 ```
 
-The preview pane (top) shows a sample block, Nerd/powerline coverage,
-real font metadata (glyph count, UPM, version), your live shell prompt,
-and slot + backup status. The font list (bottom) marks applied fonts
-with a `● slot` badge. The list is focused on launch — arrows move
-immediately, `Tab` reaches the filter box.
+The top half previews the highlighted font: a sample alphabet, symbol
+coverage, facts about the font (glyph count and version), your actual
+shell prompt, and which terminal slot it would fill. The bottom half is
+your font collection — fonts already in use carry a `● slot` badge.
+The list is ready for arrow keys right away; press `Tab` to jump to the
+search box.
 
-Non-interactive use (also handy for scripts):
+Prefer the command line? These work too (great for scripts):
 
 ```bash
 termux-fonts --list
 termux-fonts --apply "JetBrainsMono.ttf" --slot regular
 ```
 
-`--slot` is one of `regular`, `bold`, `italic`, `bold-italic`
-(default: `regular`). `--apply` matches the library by exact name first,
-then case-insensitively (ambiguous collisions are rejected), validates
-the font, backs up the previous slot file once, installs the new font,
-and asks Termux to reload settings via `termux-reload-settings` when
-available.
+Termux has four font slots: `regular`, `bold`, `italic`, and
+`bold-italic` (`regular` is the default). `--apply` finds the font by
+name (exact match first, then case-insensitive), checks that the file
+is a healthy font, saves a backup of whatever was there before,
+installs the new font, and tells Termux to reload.
 
 ### Keys
 
-| Key       | Action                              |
+| Key       | What it does                        |
 | --------- | ----------------------------------- |
-| Space/`p` | Preview the selected font (live)    |
-| Enter     | Keep (commit) the previewed font    |
-| `s`       | Cycle font slot                     |
-| `i`       | Import a font file into the library |
+| Space/`p` | Try the highlighted font, live      |
+| Enter     | Keep the font you're trying         |
+| `s`       | Switch between the four font slots  |
+| `i`       | Add one of your own font files      |
 | `d`       | Download a Nerd Font                |
-| Esc       | Back / restore original font        |
-| `q`       | Quit (restores original if dirty)   |
-| Tab       | Focus the filter box                |
+| Esc       | Go back / undo an untried preview   |
+| `q`       | Quit (undoes a preview you didn't keep) |
+| Tab       | Jump to the search box              |
 
-Highlighting a font only updates the info pane — nothing is applied
-until you preview (Space/`p`) or commit (Enter).
+Just looking around changes nothing — a font is only installed when you
+preview it (Space/`p`) or keep it (Enter).
 
-## Theming
+## Matching your style
 
-On startup the TUI reads `~/.termux/colors.properties` (if present) and
-themes itself: background/foreground for chrome text, accent from
-`color12` (fallback `color4`), muted from `color8`. Set a palette with
-[termux-colors](https://github.com/GeneralKaos666/color-changer-termux)
-and this picker follows it.
+When you open the picker, it reads your Termux color theme
+(`~/.termux/colors.properties`) and styles itself to match. Set a theme
+with [termux-colors](https://github.com/GeneralKaos666/color-changer-termux)
+and this picker follows along. No theme file? It falls back to calm
+built-in colors.
 
-## Backups
+## Backups — you can't break anything
 
-The first install or preview for a slot copies the previous slot file
-to `~/.termux/backups/<slot>-<timestamp>.<ext>` (for example
-`font-2026-10-06-120500.ttf`). Repeat previews reuse that same backup,
-so one session never piles up duplicates. Quitting with an uncommitted
-preview restores the original bytes.
+The first time each session that a font would replace something, the old
+file is copied to `~/.termux/backups/` with the date and time in its
+name (for example `font-2026-10-06-120500.ttf`). Trying more fonts reuses
+that same backup instead of piling up copies. And if you quit while
+trying a font you never kept, the original is put back automatically.
 
-## First-run seed
+## First run
 
-If `~/.termux/fonts/` is empty but `~/.termux/font.ttf` exists, startup
-seeds the library by copying it to `~/.termux/fonts/Current.ttf`, so
-the picker is never empty on first launch. Seeding runs before both the
-TUI and the `--list` / `--apply` paths.
+If your font collection is empty but Termux already has a font active,
+the tool copies it into the collection as `Current.ttf` on startup, so
+the picker is never blank. This happens for both the visual picker and
+the command-line flags.
 
-## Note: Python version discarded
+## A note on the old Python version
 
-An earlier Python/Textual implementation of this tool lived in this
-repo's history (and briefly on a `python-main` branch, now deleted).
-It is superseded by this Go port and will not be maintained. If you
-need the old code, it remains reachable in history before the Go
-commits (`git log --all -- src/termux_fonts/`).
+This tool started life as a Python program. That version is retired and
+no longer maintained — this Go rewrite replaces it completely. Curious
+archaeologists can still find it in this repo's history from before the
+Go commits (`git log --all -- src/termux_fonts/`).
