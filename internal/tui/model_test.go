@@ -277,7 +277,7 @@ func TestPreviewPane_ShowsDetailsAndPrompt(t *testing.T) {
 	}
 }
 
-func TestView_PreviewAboveList(t *testing.T) {
+func TestView_TwoColumnLayout(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
 	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
@@ -286,20 +286,111 @@ func TestView_PreviewAboveList(t *testing.T) {
 	m.width, m.height = 100, 40
 	m.sizeWidgets()
 	view := m.View()
+	// Two panes sit side by side: one rendered line carries the top-left
+	// corner of both boxes.
+	if !hasSideBySideBoxes(view) {
+		t.Fatalf("expected two columns (side-by-side boxes):\n%s", view)
+	}
+	// The library list (left) and the preview (right) both render.
 	entries := m.VisibleEntries()
 	if len(entries) < 2 {
 		t.Fatalf("want >= 2 visible entries, got %d", len(entries))
 	}
-	// entries[0] is highlighted AND shown in the preview pane; entries[1]
-	// appears only in the list. Order must be: preview, filter counts, list.
-	sample := strings.Index(view, "AaBbCc")
-	counts := strings.Index(view, "2/2")
-	second := strings.Index(view, entries[1].Name)
-	if sample < 0 || counts < 0 || second < 0 {
-		t.Fatalf("missing section (sample=%d counts=%d second=%d)", sample, counts, second)
+	if !strings.Contains(view, entries[1].Name) {
+		t.Fatalf("library list missing %q:\n%s", entries[1].Name, view)
 	}
-	if !(sample < counts && counts < second) {
-		t.Fatalf("wrong vertical order (sample=%d counts=%d second=%d)", sample, counts, second)
+	if !strings.Contains(view, "AaBbCc") {
+		t.Fatalf("preview missing sample:\n%s", view)
+	}
+}
+
+// hasSideBySideBoxes reports whether any line contains two top-left box
+// corners, i.e. at least two bordered boxes rendered on one row.
+func hasSideBySideBoxes(view string) bool {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Count(line, "╭") >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDownload_FilterNarrowsList(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	m = updateModel(t, m, keyRunes("d"))
+	if len(m.dlFiltered) < 46 {
+		t.Fatalf("download catalog = %d, want the full family list", len(m.dlFiltered))
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.dlFilterFocused {
+		t.Fatal("tab did not focus the download filter")
+	}
+	m = updateModel(t, m, keyRunes("fira"))
+	if len(m.dlFiltered) == 0 || len(m.dlFiltered) >= len(m.dlNames) {
+		t.Fatalf("filter \"fira\" kept %d of %d names", len(m.dlFiltered), len(m.dlNames))
+	}
+	for _, n := range m.dlFiltered {
+		if !strings.Contains(strings.ToLower(n), "fira") {
+			t.Fatalf("filtered list kept non-matching name %q", n)
+		}
+	}
+	if m.dlCursor != 0 {
+		t.Fatalf("cursor = %d, want 0 after narrowing", m.dlCursor)
+	}
+}
+
+func TestDownload_WindowKeepsCursorVisible(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	m = updateModel(t, m, keyRunes("d"))
+	if len(m.dlFiltered) <= dlWindow {
+		t.Fatalf("need more than %d catalog entries to test the window, got %d", dlWindow, len(m.dlFiltered))
+	}
+	assertVisible := func(t *testing.T) {
+		t.Helper()
+		if m.dlOffset > m.dlCursor || m.dlCursor >= m.dlOffset+dlWindow {
+			t.Fatalf("cursor %d outside window [%d,%d)", m.dlCursor, m.dlOffset, m.dlOffset+dlWindow)
+		}
+	}
+	for i := 0; i < len(m.dlFiltered)+5; i++ {
+		m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyDown})
+		assertVisible(t)
+	}
+	if want := len(m.dlFiltered) - 1; m.dlCursor != want {
+		t.Fatalf("cursor clamped at %d, want last index %d", m.dlCursor, want)
+	}
+	for i := 0; i < len(m.dlFiltered)+5; i++ {
+		m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyUp})
+		assertVisible(t)
+	}
+	if m.dlCursor != 0 || m.dlOffset != 0 {
+		t.Fatalf("cursor/offset at top = %d/%d, want 0/0", m.dlCursor, m.dlOffset)
+	}
+}
+
+func TestDownload_LayoutFitsAndSwapsColumns(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	m.width, m.height = 100, 40
+	m.sizeWidgets()
+	m = updateModel(t, m, keyRunes("d"))
+	view := m.View()
+	if h := lipgloss.Height(view); h != 40 {
+		t.Fatalf("download view height = %d, want 40", h)
+	}
+	if !strings.Contains(view, "Nerd Fonts") {
+		t.Fatalf("download box missing:\n%s", view)
+	}
+	if !hasSideBySideBoxes(view) {
+		t.Fatalf("expected download box beside preview/list:\n%s", view)
 	}
 }
 

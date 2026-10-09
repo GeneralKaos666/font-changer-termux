@@ -6,11 +6,43 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"termux-fonts-go/internal/downloader"
 	"termux-fonts-go/internal/paths"
 )
+
+// TestNerdFonts_AllFamiliesRegular pins the expanded catalog: one healthy
+// Regular weight per Nerd Fonts family, all on the pinned release base.
+func TestNerdFonts_AllFamiliesRegular(t *testing.T) {
+	const prefix = "https://github.com/ryanoasis/nerd-fonts/raw/v3.2.1/patched-fonts/"
+	if len(downloader.NerdFonts) < 46 {
+		t.Fatalf("catalog has %d entries, want at least 46 (one per family)", len(downloader.NerdFonts))
+	}
+	for name, url := range downloader.NerdFonts {
+		if !strings.HasPrefix(url, prefix) {
+			t.Errorf("%s: url %q is not on the pinned v3.2.1 base", name, url)
+		}
+		if !strings.HasSuffix(url, ".ttf") {
+			t.Errorf("%s: url %q does not point at a .ttf", name, url)
+		}
+		if strings.Contains(name, "Propo") {
+			t.Errorf("%s: proportional variant should not be in the terminal catalog", name)
+		}
+	}
+	for _, want := range []string{
+		"Hack-Regular", "FiraCode-Regular", "JetBrainsMono-Regular",
+		"IosevkaTerm-Regular", "CascadiaCode-Regular", "SourceCodePro-Regular",
+		"IBMPlexMono-Regular", "Mononoki-Regular", "Terminus-Regular",
+		"AnonymousPro-Regular", "NotoSansMono-Regular", "VictorMono-Regular",
+		"UbuntuMono-Regular", "ProggyClean-Regular", "iAWriterMono-Regular",
+	} {
+		if _, ok := downloader.NerdFonts[want]; !ok {
+			t.Errorf("catalog is missing family %s", want)
+		}
+	}
+}
 
 func fontBytes(t *testing.T) []byte {
 	t.Helper()

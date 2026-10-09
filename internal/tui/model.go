@@ -106,6 +106,9 @@ func defaultCapturePromptLines() []string {
 // slotOrder is the fixed s-key cycle.
 var slotOrder = []string{"regular", "bold", "italic", "bold-italic"}
 
+// dlWindow is how many Nerd Font names the download box shows at once.
+const dlWindow = 12
+
 // themePalette loads the Termux palette; any failure means defaults.
 func themePalette() theme.Palette {
 	p, err := theme.LoadFile(paths.TermuxDir() + "/colors.properties")
@@ -140,18 +143,27 @@ type Model struct {
 	overlay     overlay
 	importInput textinput.Model
 
-	previewH int // preview content height from the weight split (0 = natural)
+	previewH int // preview content height (0 = natural)
+	previewW int // preview box content width
+	leftW    int // left column box content width
+	rightW   int // right column box content width
+	listRows int // library list rows inside its box
+	band     int // column band height (box outer height)
 
 	prompt []string // live shell prompt lines (nil → mock fallback)
 
 	applied map[string]string // library path → "● slot" badges
 
-	dlNames    []string
-	dlCursor   int
-	dlActive   bool
-	dlName     string
-	dlProgress float64
-	dlGen      int
+	dlNames         []string
+	dlFiltered      []string
+	dlFilter        textinput.Model
+	dlFilterFocused bool
+	dlCursor        int
+	dlOffset        int
+	dlActive        bool
+	dlName          string
+	dlProgress      float64
+	dlGen           int
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -184,6 +196,10 @@ func NewModel() Model {
 	importInput.Placeholder = "/sdcard/Download/Hack.ttf"
 	importInput.CharLimit = 256
 
+	dlFilter := textinput.New()
+	dlFilter.Placeholder = "Type to filter Nerd Fonts..."
+	dlFilter.CharLimit = 64
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
@@ -207,6 +223,8 @@ func NewModel() Model {
 		status:      status,
 		importInput: importInput,
 		dlNames:     names,
+		dlFiltered:  names,
+		dlFilter:    dlFilter,
 		spinner:     sp,
 		progress:    bar,
 		applied:     appliedBadges(entries),
@@ -299,6 +317,61 @@ func (m *Model) refreshItems() {
 	m.list.SetDelegate(m.delegate)
 }
 
+// refreshDownloadItems recomputes the filtered Nerd Font catalog and keeps
+// the cursor on a real row.
+func (m *Model) refreshDownloadItems() {
+	q := strings.ToLower(strings.TrimSpace(m.dlFilter.Value()))
+	out := make([]string, 0, len(m.dlNames))
+	for _, n := range m.dlNames {
+		if q == "" || strings.Contains(strings.ToLower(n), q) {
+			out = append(out, n)
+		}
+	}
+	m.dlFiltered = out
+	if m.dlCursor >= len(out) {
+		m.dlCursor = max(len(out)-1, 0)
+	}
+	if m.dlCursor < 0 {
+		m.dlCursor = 0
+	}
+	m.clampDownloadWindow()
+}
+
+// clampDownloadWindow slides the visible window so the cursor always sits
+// inside it without leaving a partial page at the end.
+func (m *Model) clampDownloadWindow() {
+	if m.dlCursor < m.dlOffset {
+		m.dlOffset = m.dlCursor
+	}
+	if m.dlCursor >= m.dlOffset+dlWindow {
+		m.dlOffset = m.dlCursor - dlWindow + 1
+	}
+	if m.dlOffset > len(m.dlFiltered)-dlWindow {
+		m.dlOffset = len(m.dlFiltered) - dlWindow
+	}
+	if m.dlOffset < 0 {
+		m.dlOffset = 0
+	}
+}
+
+// dismissDownload closes the download overlay, orphaning any in-flight
+// fetch so its late completion refreshes quietly.
+func (m *Model) dismissDownload() (Model, tea.Cmd) {
+	if m.dlActive {
+		m.dlGen++
+		m.dlActive = false
+		m.dlProgress = 0
+		m.overlay = overlayNone
+		m.sizeWidgets()
+		m.status = "Download dismissed — finishing in background"
+		return *m, nil
+	}
+	m.overlay = overlayNone
+	m.sizeWidgets()
+	m.status = "Download cancelled"
+	return *m, nil
+}
+
 // Update routes key, filter and download messages; cursor movement only
 // changes the highlight and never touches slot files.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -339,6 +412,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Downloaded " + baseName(msg.path)
 			m.rescan()
 		}
+		m.sizeWidgets()
 		return m, nil
 	case importDoneMsg:
 		m.overlay = overlayNone
@@ -349,6 +423,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Imported " + baseName(msg.path)
 			m.rescan()
 		}
+		m.sizeWidgets()
 		return m, nil
 	case spinner.TickMsg:
 		if m.dlActive {
@@ -395,37 +470,63 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.overlay == overlayDownload {
 		switch key {
-		case "esc", "q":
-			if m.dlActive {
-				// The fetch cannot be cancelled mid-flight; orphan it so
-				// its late completion refreshes quietly instead of
-				// reporting a download the user dismissed.
-				m.dlGen++
-				m.dlActive = false
-				m.dlProgress = 0
-				m.overlay = overlayNone
-				m.status = "Download dismissed — finishing in background"
+		case "esc":
+			if m.dlFilterFocused {
+				m.dlFilterFocused = false
+				m.dlFilter.Blur()
 				return m, nil
 			}
-			m.overlay = overlayNone
-			m.status = "Download cancelled"
+			if strings.TrimSpace(m.dlFilter.Value()) != "" {
+				m.dlFilter.SetValue("")
+				m.refreshDownloadItems()
+				m.status = "Download filter cleared"
+				return m, nil
+			}
+			return m.dismissDownload()
+		case "q":
+			if m.dlFilterFocused {
+				var cmd tea.Cmd
+				m.dlFilter, cmd = m.dlFilter.Update(msg)
+				m.refreshDownloadItems()
+				return m, cmd
+			}
+			return m.dismissDownload()
+		case "tab":
+			m.dlFilterFocused = !m.dlFilterFocused
+			if m.dlFilterFocused {
+				m.dlFilter.Focus()
+				return m, textinput.Blink
+			}
+			m.dlFilter.Blur()
 			return m, nil
 		case "enter":
-			if !m.dlActive && len(m.dlNames) > 0 {
-				name := m.dlNames[m.dlCursor]
+			if !m.dlFilterFocused && !m.dlActive && len(m.dlFiltered) > 0 {
+				name := m.dlFiltered[m.dlCursor]
 				return m, func() tea.Msg { return downloadStartMsg{name: name} }
 			}
 			return m, nil
+		}
+		// Arrow keys browse the list even while the filter has focus;
+		// every other key edits the filter.
+		switch key {
 		case "up", "k":
-			if m.dlCursor > 0 {
+			if !m.dlFilterFocused && m.dlCursor > 0 {
 				m.dlCursor--
+				m.clampDownloadWindow()
 			}
 			return m, nil
 		case "down", "j":
-			if m.dlCursor < len(m.dlNames)-1 {
+			if !m.dlFilterFocused && m.dlCursor < len(m.dlFiltered)-1 {
 				m.dlCursor++
+				m.clampDownloadWindow()
 			}
 			return m, nil
+		}
+		if m.dlFilterFocused {
+			var cmd tea.Cmd
+			m.dlFilter, cmd = m.dlFilter.Update(msg)
+			m.refreshDownloadItems()
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -492,7 +593,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		m.overlay = overlayDownload
 		m.dlCursor = 0
-		m.status = "Download: ↑/↓ choose — Enter downloads, Esc cancels"
+		m.dlOffset = 0
+		m.dlFilterFocused = false
+		m.dlFilter.SetValue("")
+		m.dlFilter.Blur()
+		m.refreshDownloadItems()
+		m.sizeWidgets()
+		m.status = "Download: ↑/↓ choose · tab filter · Enter downloads, Esc cancels"
 		return m, nil
 	}
 
@@ -502,23 +609,43 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) sizeWidgets() {
-	// Weight split of the space below title/filter and above
-	// status/help: preview 2 : list 3. Borders add naturally on top
-	// of these content heights (never set Height on bordered styles).
-	listW, listH := 88, 14
-	if m.width > 0 {
-		listW = max(m.width-8, 30)
+	// Two columns share the width; title + status + help reserve three
+	// rows, and the rest is the column band. Each box adds a border plus
+	// a 1-cell padding on both sides, so children get a 2-cell margin.
+	w := m.width
+	if w <= 0 {
+		w = 96
 	}
-	m.previewH = 0
+	total := max(w-8, 40)
+	m.leftW = total * 2 / 5    // left box content width
+	m.rightW = total - m.leftW // right box content width
+
+	m.band = 28
 	if m.height > 0 {
-		avail := max(m.height-4, 4)
-		previewOuter := max(avail*2/5, 3)
-		listOuter := max(avail-previewOuter, 2)
-		m.previewH = max(previewOuter-2, 1)
-		listH = max(listOuter-2, 1)
+		m.band = max(m.height-3, 4)
 	}
-	m.list.SetSize(listW, listH)
-	m.delegate.width = listW
+
+	previewOuter, listOuter := m.band, m.band
+	if m.overlay == overlayDownload {
+		// Download box fills the left column; the right column stacks
+		// preview over the library list.
+		previewOuter = max(m.band*2/5, 3)
+		listOuter = max(m.band-previewOuter, 2)
+	}
+	m.previewW = max(m.rightW-2, 8)
+	m.previewH = max(previewOuter-2, 1)
+	m.listRows = max(listOuter-2-1, 1) // minus border and filter line
+
+	listInner := max(m.leftW-2, 8)
+	filterBox := m.leftW
+	if m.overlay == overlayDownload {
+		listInner = max(m.rightW-2, 8)
+		filterBox = m.rightW
+	}
+	m.filter.Width = max(filterBox-8, 8)
+	m.dlFilter.Width = max(m.leftW-4, 8)
+	m.list.SetSize(listInner, m.listRows)
+	m.delegate.width = listInner
 	m.list.SetDelegate(m.delegate)
-	m.progress.Width = max(listW, 20)
+	m.progress.Width = max(m.rightW, 20)
 }

@@ -153,8 +153,11 @@ func humanSize(n int64) string {
 	return fmt.Sprintf("%.0f KB", float64(n)/1024)
 }
 
-// boxInnerWidth is the content width inside a full-width bordered box.
+// boxInnerWidth is the content width inside the preview box.
 func (m Model) boxInnerWidth() int {
+	if m.previewW > 0 {
+		return m.previewW
+	}
 	w := m.width
 	if w <= 0 {
 		w = 96
@@ -263,53 +266,30 @@ func helpBar() string {
 	return helpStyle.Render(strings.Join(parts, " · "))
 }
 
-// View renders title, preview (top half) + filter/list (bottom half),
-// overlays, status and help — all TTY-free.
+// View renders the two-column frame: title, the library/preview (or
+// download) panes, overlays, status and help — all TTY-free.
 func (m Model) View() string {
+	if m.leftW == 0 {
+		m.sizeWidgets()
+	}
 	w := m.width
 	if w <= 0 {
 		w = 96
 	}
 
 	title := titleStyle.Render(gradientTitle("termux-fonts")) + slotStyle.Render("slot: "+m.slot)
-	filterLine := m.filter.View() + statusStyle.Render(fmt.Sprintf("  %d/%d", len(m.VisibleEntries()), len(m.entries)))
 
-	preview := boxStyle.Width(max(w-4, 30)).Render(m.PreviewPane())
-
-	listContent := statusStyle.Render("No fonts in library — press i to import, d to download.")
-	if len(m.list.Items()) > 0 {
-		listContent = m.list.View()
+	body := m.libraryLayout()
+	if m.overlay == overlayDownload {
+		body = m.downloadLayout()
 	}
-	fonts := boxStyle.Width(max(w-4, 30)).Render(listContent)
 
 	var b strings.Builder
 	b.WriteString(title + "\n")
-	b.WriteString(preview + "\n")
-	b.WriteString(filterLine + "\n")
-	b.WriteString(fonts + "\n")
+	b.WriteString(body + "\n")
 
 	if m.overlay == overlayImport {
-		b.WriteString(boxStyle.Render("Import font path:\n"+m.importInput.View()) + "\n")
-	}
-	if m.overlay == overlayDownload {
-		var names strings.Builder
-		for i, name := range m.dlNames {
-			cursor := "  "
-			if i == m.dlCursor {
-				cursor = "> "
-			}
-			line := cursor + name
-			if i == m.dlCursor {
-				line = selectedStyle.Render(line)
-			}
-			names.WriteString(line + "\n")
-		}
-		b.WriteString(boxStyle.Render("Nerd Fonts (↑/↓ + Enter):\n"+names.String()) + "\n")
-	}
-	if m.dlActive {
-		bar := m.progress.ViewAs(m.dlProgress)
-		b.WriteString(boxStyle.Render(fmt.Sprintf("%s Downloading %s… (no progress info)\n%s",
-			m.spinner.View(), m.dlName, bar)) + "\n")
+		b.WriteString(boxStyle.Width(max(w-4, 30)).Render("Import font path:\n"+m.importInput.View()) + "\n")
 	}
 
 	status := m.status
@@ -319,4 +299,74 @@ func (m Model) View() string {
 	b.WriteString(statusStyle.Render(status) + "\n")
 	b.WriteString(helpBar())
 	return b.String()
+}
+
+// libraryLayout is the default frame: library list left, preview right.
+func (m Model) libraryLayout() string {
+	left := m.listBox(m.leftW)
+	right := boxStyle.Width(m.rightW).Render(m.PreviewPane())
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
+// downloadLayout swaps the panes while the Nerd Font picker is open:
+// download box left; preview over the library list on the right.
+func (m Model) downloadLayout() string {
+	right := lipgloss.JoinVertical(lipgloss.Left,
+		boxStyle.Width(m.rightW).Render(m.PreviewPane()),
+		m.listBox(m.rightW),
+	)
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.downloadBox(m.leftW), right)
+}
+
+// listBox renders the library filter line plus the scrollable list.
+func (m Model) listBox(width int) string {
+	content := m.filter.View() + statusStyle.Render(fmt.Sprintf("  %d/%d", len(m.VisibleEntries()), len(m.entries))) + "\n"
+	if len(m.list.Items()) > 0 {
+		content += m.list.View()
+	} else {
+		content += statusStyle.Render("No fonts — press i to import, d to download.")
+	}
+	return boxStyle.Width(width).Render(fitLines(content, m.listRows+1))
+}
+
+// fitLines pads or truncates a block to exactly n lines.
+func fitLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for len(lines) < n {
+		lines = append(lines, "")
+	}
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// downloadBox renders the windowed Nerd Font picker, padded to the column
+// height so the frame never overflows.
+func (m Model) downloadBox(width int) string {
+	shown := 0
+	if len(m.dlFiltered) > 0 {
+		shown = m.dlCursor + 1
+	}
+	var b strings.Builder
+	b.WriteString(statusStyle.Render(fmt.Sprintf("Nerd Fonts  %d/%d", shown, len(m.dlFiltered))) + "\n")
+	b.WriteString(m.dlFilter.View() + "\n")
+	end := min(m.dlOffset+dlWindow, len(m.dlFiltered))
+	for i := m.dlOffset; i < end; i++ {
+		line := "  " + truncateCells(m.dlFiltered[i], max(width-2, 4))
+		if i == m.dlCursor {
+			line = selectedStyle.Render("> " + truncateCells(m.dlFiltered[i], max(width-4, 4)))
+		}
+		b.WriteString(line + "\n")
+	}
+	if len(m.dlFiltered) == 0 {
+		b.WriteString(statusStyle.Render("  no matches") + "\n")
+	}
+	if m.dlActive {
+		b.WriteString("\n" + m.spinner.View() + " Downloading " + m.dlName + "… (no progress info)\n")
+		b.WriteString(m.progress.ViewAs(m.dlProgress) + "\n")
+	}
+
+	contentH := max(m.band-2, 1)
+	return boxStyle.Width(width).Render(fitLines(b.String(), contentH))
 }
