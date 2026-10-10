@@ -134,8 +134,8 @@ func (p *progressReader) Read(b []byte) (int, error) {
 // It skips the download when the file already exists with the same size as
 // the remote (unless force is true). Unknown names and invalid downloads
 // return an error. When onProgress is non-nil it receives the running byte
-// totals during the copy (see ProgressFunc); skipped and failed fetches
-// report nothing.
+// totals during the copy (see ProgressFunc); skipped fetches report
+// nothing, and failures never report a terminal completion.
 func Fetch(name string, force bool, onProgress ProgressFunc) (string, error) {
 	rawURL, ok := NerdFonts[name]
 	if !ok {

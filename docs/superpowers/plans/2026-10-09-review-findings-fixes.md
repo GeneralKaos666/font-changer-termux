@@ -146,7 +146,7 @@ git commit -m "fix(tui): q quits even when the dirty-restore fails (matches Pyth
 - Test: `internal/tui/model_test.go`
 
 **Interfaces:**
-- Consumes: `apply.IsPreviewDirty`, `apply.CommitPreview(st)`, `st.Preview.Slot` (read BEFORE `CommitPreview` clears `Preview`); `slotOrder` (Task 4 renames this to `paths.SlotNames` — this task still compiles against the current name).
+- Consumes: `apply.IsPreviewDirty`, `apply.CommitPreview(st)`, `st.Preview.Slot` (read BEFORE `CommitPreview` clears `Preview`); `slotOrder` (renamed to `paths.SlotNames` by Task 4 — Task 3 executes before Task 4, so it uses the pre-rename name).
 - Produces: none.
 
 - [ ] **Step 1: Write the failing test**
@@ -177,7 +177,7 @@ Expected: FAIL — current message reads "→ bold slot".
 
 - [ ] **Step 3: Read the preview slot before committing**
 
-In `doCommit` (actions.go:60-67), when dirty: `slot := m.state.Preview.Slot` first, then `target := apply.CommitPreview(m.state)` (which nils `Preview`), then `m.status = fmt.Sprintf("Kept %s → %s slot", filepath.Base(target), slot) + reloadHint()`. The non-dirty `InstallFont` branch keeps using `m.slot` (correct there).
+In `doCommit` (actions.go:53-77), when dirty: read `src, slot := st.Preview.Src, st.Preview.Slot` BEFORE `apply.CommitPreview(m.state)` (which nils `Preview`), then `m.status = fmt.Sprintf("Kept %s → %s slot", filepath.Base(src), slot) + reloadHint()`. The non-dirty `InstallFont` branch keeps using `m.slot` (correct there).
 
 - [ ] **Step 4: Run the full suite**
 

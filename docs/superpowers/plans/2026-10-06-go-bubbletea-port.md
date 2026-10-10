@@ -191,7 +191,7 @@ git commit -m "feat(go): add backup-once preview/commit/restore and reload"
 **Interfaces:**
 - Consumes: `paths.FontsDir()`, `validate.IsValidFont`.
 - Produces:
-  - `importer.ImportFile(src, clash string) (string, error)` (`clash` ∈ `error|keep-both|replace`)
+  - `importer.ImportFile(src, clash string) (string, error)` (`clash` ∈ `ask|error|keep-both|replace`)
   - `importer.ResolveClash(dest string) string` (`name-N.ttf`)
   - `downloader.NerdFonts map[string]string` (same 11 URLs as Python)
   - `downloader.Fetch(name string, force bool) (string, error)`

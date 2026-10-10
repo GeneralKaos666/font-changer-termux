@@ -66,7 +66,7 @@ preview (58%) via Bubbles `list` + `textinput` + `viewport`, styled with Lip Glo
    (anchored per-slot reuse: `{stem}-YYYY-MM-DD-HHMMSS{suffix}` full-match),
    `InstallFont`, `PreviewFont` (dirty+preview), `CommitPreview`, `RestoreOriginal`,
    `ReloadSettings` (`exec.LookPath` + run, missing → false + manual-restart hint).
-5. **importer** — `ImportFile(src, clash)` with `error|keep-both|replace`;
+5. **importer** — `ImportFile(src, clash)` with `ask|error|keep-both|replace`;
    EACCES → `termux-setup-storage` hint. The import flow gains a
    three-choice clash prompt (keep-both / replace / cancel), `~` expansion,
    and tab-complete of `$HOME` paths (deferred in the Python TUI, approved
