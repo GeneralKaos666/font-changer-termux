@@ -52,6 +52,10 @@ spec stays the behavioral authority; conflicts resolve against it.
 Elm pattern: one `Model` (entries, filter, slot, session state, status),
 `Update` routes key/filter/download messages, `View` renders list (42%) +
 preview (58%) via Bubbles `list` + `textinput` + `viewport`, styled with Lip Gloss.
+The two-column split applies at >= 80 columns; narrower terminals fold the
+preview away (single-pane list), and below 44x8 `View` shows a "terminal
+too small" notice. The picker runs on the alternate screen (restored on
+exit), so it never scribbles over scrollback.
 
 ## 3. Components (approved)
 
@@ -76,7 +80,9 @@ preview (58%) via Bubbles `list` + `textinput` + `viewport`, styled with Lip Glo
    force)` via `net/http` HEAD size skip, temp + atomic rename, partial
    cleanup.
 7. **tui** — Model/Update/View; keymap space/p/enter/s/i/d/esc/q identical to
-   Python; downloads as `tea.Cmd` producing messages; all I/O errors surface
+   Python, plus Go-only ergonomics: Ctrl+C quits from any screen (restoring an
+   uncommitted preview) and Ctrl+Z suspends (the library is re-read on resume);
+   downloads as `tea.Cmd` producing messages; all I/O errors surface
    in the status line, never crash.
 8. **theme** — `colors.properties` palette → adaptive accent/muted.
 
@@ -89,9 +95,20 @@ Keyboard-first Lip Gloss treatment, no mouse required:
   coverage row (`  `), plus file info (family/style/size), the
   glyph/UPM/version info line, the live shell-prompt line, and slot +
   backup-status line (`font.ttf ← Hack • backup taken`).
-- Filter input with match highlighting; styled help bar with all keys;
-  spinner + progress bar on downloads; selected row highlighted with
-  accent background, not just a cursor.
+- Filter input with match highlighting; a context-sensitive help bar that
+  lists only the keys active on the current screen (main / filter / import /
+  download / clash); spinner + progress bar on downloads; the selected row
+  carries both an accent background and a `▶` cursor marker, so the selection
+  survives monochrome terminals (where termenv strips all color and
+  attributes).
+- Width discipline: every rendered line is clamped to the terminal width, so
+  the frame never wraps; `< 80` columns folds the preview away and `< 44x8`
+  shows a floor notice naming the minimum size. The picker runs on the
+  alternate screen, so it never scribbles over scrollback.
+- Optional plain-ASCII chrome (`--ascii`, `NERDFONT_CHANGER_ASCII=1`) swaps
+  the rounded borders, `●` badge, `▶` marker and `…` ellipsis for
+  `+ - | * > ...`; the previewed glyph samples stay Unicode (they are the
+  point of the tool).
 - Restrained palette: accent + muted + default foreground only — no rainbow.
 
 ## 4. Data flow (approved)

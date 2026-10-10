@@ -63,7 +63,9 @@ coverage, facts about the font (glyph count and version), your actual
 shell prompt, and which terminal slot it would fill. The bottom half is
 your font collection — fonts already in use carry a `● slot` badge.
 The list is ready for arrow keys right away; press `Tab` to jump to the
-search box.
+search box. On a narrow terminal the preview folds away and the list
+takes the whole screen; a window smaller than 44 columns by 8 rows gets a
+"terminal too small" notice instead of a squashed frame.
 
 Prefer the command line? These work too (great for scripts):
 
@@ -88,8 +90,16 @@ installs the new font, and tells Termux to reload.
 | `i`       | Add one of your own font files      |
 | `d`       | Download a Nerd Font                |
 | Esc       | Go back / undo an untried preview   |
-| `q`       | Quit (undoes a preview you didn't keep) |
+| `q`, Ctrl+C | Quit (undoes a preview you didn't keep) |
+| Ctrl+Z    | Suspend to the shell; run `fg` to return |
 | Tab       | Jump to the search box              |
+
+The footer always shows the keys that work on the screen you're on, so
+you don't have to remember the full list.
+
+If your terminal renders box-drawing characters as garbage, start the
+picker with `nerdfont-changer --ascii` (or set `NERDFONT_CHANGER_ASCII=1`)
+for plain-ASCII borders and markers.
 
 Just looking around changes nothing — a font is only installed when you
 preview it (Space/`p`) or keep it (Enter).
