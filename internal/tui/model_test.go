@@ -723,6 +723,35 @@ func TestImport_ClashPromptKeepBoth(t *testing.T) {
 	}
 }
 
+func TestImport_ClashPromptLetterIKeepsBoth(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	original := fixtureBytes(t, "b.ttf")
+	writeLibraryFont(t, "newfont.ttf", original)
+	src := stageFont(t, "newfont.ttf")
+
+	m := NewModel()
+	m = openImport(t, m, src)
+	m = pressEnter(t, m)
+	m = pressKey(t, m, "i") // alias for 1 (keep both)
+	if !strings.HasPrefix(m.status, "Imported ") {
+		t.Fatalf("status after i = %q, want it to start with %q", m.status, "Imported ")
+	}
+	if m.overlay != overlayNone {
+		t.Fatalf("overlay = %v after resolution, want overlayNone", m.overlay)
+	}
+	kept, err := os.ReadFile(filepath.Join(paths.FontsDir(), "newfont-1.ttf"))
+	if err != nil {
+		t.Fatalf("i did not keep both (no newfont-1.ttf): %v", err)
+	}
+	if string(kept) != string(fixtureBytes(t, "a.ttf")) {
+		t.Fatal("i kept the wrong bytes")
+	}
+	if got, _ := os.ReadFile(filepath.Join(paths.FontsDir(), "newfont.ttf")); string(got) != string(original) {
+		t.Fatal("i must leave the pre-existing file untouched")
+	}
+}
+
 func TestImport_ClashPromptReplace(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
