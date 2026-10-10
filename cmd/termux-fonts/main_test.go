@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
@@ -115,5 +117,32 @@ func TestRealMain_UnknownSlotIsExit2(t *testing.T) {
 	t.Setenv("TERMUX_HOME", dir)
 	if got := realMain([]string{"--apply", "Hack.ttf", "--slot", "bogus"}); got != 2 {
 		t.Fatalf("realMain(--apply Hack.ttf --slot bogus) = %d, want 2", got)
+	}
+}
+
+func TestRealMain_VersionPrints(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TERMUX_HOME", dir)
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	code := realMain([]string{"--version"})
+	_ = w.Close()
+	os.Stdout = old
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatalf("realMain(--version) = %d, want 0", code)
+	}
+	want := "termux-fonts " + version
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Fatalf("--version output = %q, want %q", got, want)
 	}
 }

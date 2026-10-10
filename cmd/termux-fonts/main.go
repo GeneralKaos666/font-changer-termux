@@ -19,6 +19,10 @@ import (
 	"github.com/GeneralKaos666/font-changer-termux/internal/tui"
 )
 
+// version is the build version, overridden at release time with
+// -ldflags "-X main.version=vX.Y.Z". It stays "dev" for local builds.
+var version = "dev"
+
 // ensureBuiltinSeed copies the active regular slot file to
 // fonts/Current.ttf when the library is empty, so first launch is never
 // empty. It returns the seed path, or "" when no seeding was needed.
@@ -127,9 +131,14 @@ func realMain(argv []string) int {
 	list := fs.Bool("list", false, "Print library font names and exit.")
 	applyName := fs.String("apply", "", "Install library font NAME into --slot and exit.")
 	slot := fs.String("slot", "regular", "Font slot for --apply (default: regular).")
+	versionFlag := fs.Bool("version", false, "Print version and exit.")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(argv); err != nil {
 		return 2
+	}
+	if *versionFlag {
+		fmt.Printf("termux-fonts %s\n", version)
+		return 0
 	}
 	if _, err := paths.FontSlotPath(*slot); err != nil {
 		fmt.Fprintf(os.Stderr, "%v (choose from %s)\n", err, strings.Join(paths.SlotNames, ", "))
