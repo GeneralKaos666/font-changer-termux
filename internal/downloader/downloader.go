@@ -106,12 +106,37 @@ func destFor(rawURL, name string) string {
 	return filepath.Join(paths.FontsDir(), filename)
 }
 
+// ProgressFunc receives the running byte totals after each read of the
+// download body. total is the response Content-Length: when it is
+// unknown (no/negative Content-Length) the hook is called exactly once
+// with (0, -1) before the copy starts, and on a complete copy the final
+// call reaches (total, total) — fraction 1.0.
+type ProgressFunc func(downloaded, total int64)
+
+// progressReader reports the running totals after every Read of the
+// wrapped body, including the final zero-byte EOF read.
+type progressReader struct {
+	r     io.Reader
+	done  int64
+	total int64
+	on    ProgressFunc
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.done += int64(n)
+	p.on(p.done, p.total)
+	return n, err
+}
+
 // Fetch downloads Nerd Font name into the library and returns its path.
 //
 // It skips the download when the file already exists with the same size as
 // the remote (unless force is true). Unknown names and invalid downloads
-// return an error.
-func Fetch(name string, force bool) (string, error) {
+// return an error. When onProgress is non-nil it receives the running byte
+// totals during the copy (see ProgressFunc); skipped and failed fetches
+// report nothing.
+func Fetch(name string, force bool, onProgress ProgressFunc) (string, error) {
 	rawURL, ok := NerdFonts[name]
 	if !ok {
 		choices := make([]string, 0, len(NerdFonts))
@@ -152,8 +177,24 @@ func Fetch(name string, force bool) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download of %q failed: %s", name, resp.Status)
 	}
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	src := io.Reader(resp.Body)
+	if onProgress != nil {
+		if resp.ContentLength < 0 {
+			// Unknown total: one honest (0, -1) report before the copy —
+			// no per-read calls, so no fake fraction can be implied.
+			onProgress(0, -1)
+		} else {
+			src = &progressReader{r: resp.Body, total: resp.ContentLength, on: onProgress}
+		}
+	}
+	if _, err := io.Copy(tmp, src); err != nil {
 		return "", err
+	}
+	if onProgress != nil && resp.ContentLength >= 0 {
+		// Guarantee the terminal (total, total) report: the body reader
+		// may deliver the last byte and EOF in one Read, which would
+		// otherwise leave the final fraction up to timing.
+		onProgress(resp.ContentLength, resp.ContentLength)
 	}
 	if err := tmp.Close(); err != nil {
 		return "", err

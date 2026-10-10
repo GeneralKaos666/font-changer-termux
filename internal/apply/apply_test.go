@@ -237,6 +237,47 @@ func TestReload_MissingBinaryWarns(t *testing.T) {
 	}
 }
 
+// TestInstallFont_KeepsSymlinkSlot pins write-through semantics: installing
+// over a symlinked slot replaces the symlink's target file, and the symlink
+// itself must survive. Passes with both direct-write and temp+rename copies.
+func TestInstallFont_KeepsSymlinkSlot(t *testing.T) {
+	root := useTermuxHome(t)
+	noReload(t)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "real-font.ttf")
+	orig, err := os.ReadFile(fixture(t, "a.ttf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, orig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slot, err := paths.FontSlotPath("regular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(slot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, slot); err != nil {
+		t.Skipf("symlinks unsupported on this filesystem: %v", err)
+	}
+	src := fixture(t, "b.ttf")
+	if _, err := InstallFont(src, "regular"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(slot); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("slot is no longer a symlink after install: %v %v", fi, err)
+	}
+	got, _ := os.ReadFile(target) // writes must land in the real file, through the symlink
+	want, _ := os.ReadFile(src)
+	if string(got) != string(want) {
+		t.Fatal("slot target was not replaced by the installed font")
+	}
+}
+
 func TestEnsureBackupOnce_MissingTarget(t *testing.T) {
 	useTermuxHome(t)
 	target, err := paths.FontSlotPath("regular")

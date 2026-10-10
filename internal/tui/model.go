@@ -12,7 +12,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"fmt"
 	"os"
 	"os/exec"
 	"sort"
@@ -36,27 +35,13 @@ import (
 // FilterMsg sets the list filter to its value and narrows visible items.
 type FilterMsg string
 
-type downloadStartMsg struct{ name string }
-
-type downloadProgressMsg float64
-
-type downloadDoneMsg struct {
-	path string
-	err  error
-	gen  int
-}
-
-type importDoneMsg struct {
-	path string
-	err  error
-}
-
 type overlay int
 
 const (
 	overlayNone overlay = iota
 	overlayImport
 	overlayDownload
+	overlayImportClash
 )
 
 // capturePromptLines renders the user's live shell prompt (with colors)
@@ -103,15 +88,9 @@ func defaultCapturePromptLines() []string {
 	return lines
 }
 
-// slotOrder is the fixed s-key cycle.
-var slotOrder = []string{"regular", "bold", "italic", "bold-italic"}
-
-// dlWindow is how many Nerd Font names the download box shows at once.
-const dlWindow = 12
-
 // themePalette loads the Termux palette; any failure means defaults.
 func themePalette() theme.Palette {
-	p, err := theme.LoadFile(paths.TermuxDir() + "/colors.properties")
+	p, err := theme.LoadFile(paths.ColorsPath())
 	if err != nil {
 		return theme.Palette{}
 	}
@@ -140,8 +119,9 @@ type Model struct {
 	width       int
 	height      int
 
-	overlay     overlay
-	importInput textinput.Model
+	overlay           overlay
+	importInput       textinput.Model
+	pendingImportPath string // source path of an import awaiting the clash choice
 
 	previewH int // preview content height (0 = natural)
 	previewW int // preview box content width
@@ -164,6 +144,8 @@ type Model struct {
 	dlName          string
 	dlProgress      float64
 	dlGen           int
+	dlKnown         bool         // a measured total arrived; wording and easing stop faking it
+	dlCh            chan tea.Msg // in-flight fetch pipeline; nil when none is current
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -315,337 +297,4 @@ func (m *Model) refreshItems() {
 	m.list.SetItems(items)
 	m.delegate.query = strings.TrimSpace(m.filter.Value())
 	m.list.SetDelegate(m.delegate)
-}
-
-// refreshDownloadItems recomputes the filtered Nerd Font catalog and keeps
-// the cursor on a real row.
-func (m *Model) refreshDownloadItems() {
-	q := strings.ToLower(strings.TrimSpace(m.dlFilter.Value()))
-	out := make([]string, 0, len(m.dlNames))
-	for _, n := range m.dlNames {
-		if q == "" || strings.Contains(strings.ToLower(n), q) {
-			out = append(out, n)
-		}
-	}
-	m.dlFiltered = out
-	if m.dlCursor >= len(out) {
-		m.dlCursor = max(len(out)-1, 0)
-	}
-	if m.dlCursor < 0 {
-		m.dlCursor = 0
-	}
-	m.clampDownloadWindow()
-}
-
-// clampDownloadWindow slides the visible window so the cursor always sits
-// inside it without leaving a partial page at the end.
-func (m *Model) clampDownloadWindow() {
-	if m.dlCursor < m.dlOffset {
-		m.dlOffset = m.dlCursor
-	}
-	if m.dlCursor >= m.dlOffset+dlWindow {
-		m.dlOffset = m.dlCursor - dlWindow + 1
-	}
-	if m.dlOffset > len(m.dlFiltered)-dlWindow {
-		m.dlOffset = len(m.dlFiltered) - dlWindow
-	}
-	if m.dlOffset < 0 {
-		m.dlOffset = 0
-	}
-}
-
-// dismissDownload closes the download overlay, orphaning any in-flight
-// fetch so its late completion refreshes quietly.
-func (m *Model) dismissDownload() (Model, tea.Cmd) {
-	if m.dlActive {
-		m.dlGen++
-		m.dlActive = false
-		m.dlProgress = 0
-		m.overlay = overlayNone
-		m.sizeWidgets()
-		m.status = "Download dismissed — finishing in background"
-		return *m, nil
-	}
-	m.overlay = overlayNone
-	m.sizeWidgets()
-	m.status = "Download cancelled"
-	return *m, nil
-}
-
-// Update routes key, filter and download messages; cursor movement only
-// changes the highlight and never touches slot files.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.sizeWidgets()
-		return m, nil
-	case FilterMsg:
-		m.filter.SetValue(string(msg))
-		m.refreshItems()
-		return m, nil
-	case downloadStartMsg:
-		m.dlGen++
-		m.dlActive = true
-		m.dlName = msg.name
-		m.dlProgress = 0
-		// Fetch reports no byte fractions, so the bar is an activity
-		// indicator: say so instead of implying measured progress.
-		m.status = fmt.Sprintf("Downloading %s… (no progress info)", msg.name)
-		return m, tea.Batch(fetchCmd(msg.name, m.dlGen), m.spinner.Tick)
-	case downloadProgressMsg:
-		m.dlProgress = clamp01(float64(msg))
-		return m, nil
-	case downloadDoneMsg:
-		m.dlActive = false
-		m.dlProgress = 0
-		if msg.gen != m.dlGen {
-			// Orphaned by a dismiss: refresh the list quietly without
-			// claiming a download the user was told was dismissed.
-			m.rescan()
-			return m, nil
-		}
-		m.overlay = overlayNone
-		if msg.err != nil {
-			m.status = "Download failed: " + msg.err.Error()
-		} else {
-			m.status = "Downloaded " + baseName(msg.path)
-			m.rescan()
-		}
-		m.sizeWidgets()
-		return m, nil
-	case importDoneMsg:
-		m.overlay = overlayNone
-		m.importInput.Blur()
-		if msg.err != nil {
-			m.status = "Import failed: " + msg.err.Error()
-		} else {
-			m.status = "Imported " + baseName(msg.path)
-			m.rescan()
-		}
-		m.sizeWidgets()
-		return m, nil
-	case spinner.TickMsg:
-		if m.dlActive {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			// Ease the bar toward 90% while the fetch runs; the done
-			// message dismisses it. Real progress arrives via
-			// downloadProgressMsg when available.
-			if m.dlProgress < 0.9 {
-				m.dlProgress += (0.9 - m.dlProgress) * 0.08
-			}
-			return m, cmd
-		}
-		return m, nil
-	case tea.KeyMsg:
-		return m.handleKey(msg)
-	}
-	if m.focusFilter && m.overlay == overlayNone {
-		var cmd tea.Cmd
-		m.filter, cmd = m.filter.Update(msg)
-		m.refreshItems()
-		return m, cmd
-	}
-	return m, nil
-}
-
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-
-	if m.overlay == overlayImport {
-		switch key {
-		case "esc":
-			m.overlay = overlayNone
-			m.importInput.Blur()
-			m.status = "Import cancelled"
-			return m, nil
-		case "enter":
-			return m, importCmd(strings.TrimSpace(m.importInput.Value()))
-		}
-		var cmd tea.Cmd
-		m.importInput, cmd = m.importInput.Update(msg)
-		return m, cmd
-	}
-
-	if m.overlay == overlayDownload {
-		switch key {
-		case "esc":
-			if m.dlFilterFocused {
-				m.dlFilterFocused = false
-				m.dlFilter.Blur()
-				return m, nil
-			}
-			if strings.TrimSpace(m.dlFilter.Value()) != "" {
-				m.dlFilter.SetValue("")
-				m.refreshDownloadItems()
-				m.status = "Download filter cleared"
-				return m, nil
-			}
-			return m.dismissDownload()
-		case "q":
-			if m.dlFilterFocused {
-				var cmd tea.Cmd
-				m.dlFilter, cmd = m.dlFilter.Update(msg)
-				m.refreshDownloadItems()
-				return m, cmd
-			}
-			return m.dismissDownload()
-		case "tab":
-			m.dlFilterFocused = !m.dlFilterFocused
-			if m.dlFilterFocused {
-				m.dlFilter.Focus()
-				return m, textinput.Blink
-			}
-			m.dlFilter.Blur()
-			return m, nil
-		case "enter":
-			if !m.dlFilterFocused && !m.dlActive && len(m.dlFiltered) > 0 {
-				name := m.dlFiltered[m.dlCursor]
-				return m, func() tea.Msg { return downloadStartMsg{name: name} }
-			}
-			return m, nil
-		}
-		// Arrow keys browse the list even while the filter has focus;
-		// every other key edits the filter.
-		switch key {
-		case "up", "k":
-			if !m.dlFilterFocused && m.dlCursor > 0 {
-				m.dlCursor--
-				m.clampDownloadWindow()
-			}
-			return m, nil
-		case "down", "j":
-			if !m.dlFilterFocused && m.dlCursor < len(m.dlFiltered)-1 {
-				m.dlCursor++
-				m.clampDownloadWindow()
-			}
-			return m, nil
-		}
-		if m.dlFilterFocused {
-			var cmd tea.Cmd
-			m.dlFilter, cmd = m.dlFilter.Update(msg)
-			m.refreshDownloadItems()
-			return m, cmd
-		}
-		return m, nil
-	}
-
-	if m.focusFilter {
-		switch key {
-		case "tab", "enter":
-			m.focusFilter = false
-			m.filter.Blur()
-			return m, nil
-		case "esc":
-			m.focusFilter = false
-			m.filter.Blur()
-			m.filter.SetValue("")
-			m.refreshItems()
-			m.status = "Filter cleared"
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.filter, cmd = m.filter.Update(msg)
-		m.refreshItems()
-		return m, cmd
-	}
-
-	switch key {
-	case "q":
-		if apply.IsPreviewDirty(m.state) {
-			if _, err := restoreOriginal(m.state); err != nil {
-				m.status = "Restore failed: " + err.Error()
-				return m, nil
-			}
-			m.status = "Restored original — bye"
-		}
-		return m, tea.Quit
-	case "esc":
-		if apply.IsPreviewDirty(m.state) {
-			if _, err := restoreOriginal(m.state); err != nil {
-				m.status = "Restore failed: " + err.Error()
-			} else {
-				m.status = "Restored original"
-			}
-		} else {
-			m.status = "Nothing to restore"
-		}
-		return m, nil
-	case "tab":
-		m.focusFilter = true
-		m.filter.Focus()
-		return m, textinput.Blink
-	case "s":
-		m.cycleSlot()
-		return m, nil
-	case " ", "p":
-		m.doPreview()
-		return m, nil
-	case "enter":
-		m.doCommit()
-		return m, nil
-	case "i":
-		m.overlay = overlayImport
-		m.importInput.Focus()
-		m.status = "Import: type a font path — Enter imports, Esc cancels"
-		return m, textinput.Blink
-	case "d":
-		m.overlay = overlayDownload
-		m.dlCursor = 0
-		m.dlOffset = 0
-		m.dlFilterFocused = false
-		m.dlFilter.SetValue("")
-		m.dlFilter.Blur()
-		m.refreshDownloadItems()
-		m.sizeWidgets()
-		m.status = "Download: ↑/↓ choose · tab filter · Enter downloads, Esc cancels"
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
-}
-
-func (m *Model) sizeWidgets() {
-	// Two columns share the width; title + status + help reserve three
-	// rows, and the rest is the column band. Each box adds a border plus
-	// a 1-cell padding on both sides, so children get a 2-cell margin.
-	w := m.width
-	if w <= 0 {
-		w = 96
-	}
-	total := max(w-8, 40)
-	m.leftW = total * 2 / 5    // left box content width
-	m.rightW = total - m.leftW // right box content width
-
-	m.band = 28
-	if m.height > 0 {
-		m.band = max(m.height-3, 4)
-	}
-
-	previewOuter, listOuter := m.band, m.band
-	if m.overlay == overlayDownload {
-		// Download box fills the left column; the right column stacks
-		// preview over the library list.
-		previewOuter = max(m.band*2/5, 3)
-		listOuter = max(m.band-previewOuter, 2)
-	}
-	m.previewW = max(m.rightW-2, 8)
-	m.previewH = max(previewOuter-2, 1)
-	m.listRows = max(listOuter-2-1, 1) // minus border and filter line
-
-	listInner := max(m.leftW-2, 8)
-	filterBox := m.leftW
-	if m.overlay == overlayDownload {
-		listInner = max(m.rightW-2, 8)
-		filterBox = m.rightW
-	}
-	m.filter.Width = max(filterBox-8, 8)
-	m.dlFilter.Width = max(m.leftW-4, 8)
-	m.list.SetSize(listInner, m.listRows)
-	m.delegate.width = listInner
-	m.list.SetDelegate(m.delegate)
-	m.progress.Width = max(m.rightW, 20)
 }

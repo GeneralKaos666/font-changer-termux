@@ -52,15 +52,23 @@ func ResolveClash(dest string) (string, error) {
 	}
 }
 
+// ClashError reports that ImportFile's destination already exists under
+// the "ask" clash mode; Dest is the library path that collided, so the
+// caller can prompt and retry with "keep-both" or "replace".
+type ClashError struct{ Dest string }
+
+func (e *ClashError) Error() string { return "font already in library: " + filepath.Base(e.Dest) }
+
 // ImportFile validates src and copies it into the font library.
 //
-// clash controls name collisions: "error" raises FileExistsError,
-// "keep-both" picks <name>-N.ttf, "replace" overwrites.
+// clash controls name collisions: "ask" raises *ClashError so the caller
+// decides, "error" fails with a plain error, "keep-both" picks
+// <name>-N.ttf, "replace" overwrites.
 func ImportFile(src, clash string) (string, error) {
 	switch clash {
-	case "error", "keep-both", "replace":
+	case "ask", "error", "keep-both", "replace":
 	default:
-		return "", fmt.Errorf("unknown clash mode %q; choose from error, keep-both, replace", clash)
+		return "", fmt.Errorf("unknown clash mode %q; choose from ask, error, keep-both, replace", clash)
 	}
 	ok, reason := validate.IsValidFont(src)
 	if !ok {
@@ -80,6 +88,8 @@ func ImportFile(src, clash string) (string, error) {
 	}
 	if _, err := os.Stat(dest); err == nil {
 		switch clash {
+		case "ask":
+			return "", &ClashError{Dest: dest}
 		case "error":
 			return "", fmt.Errorf("font already in library: %s", filepath.Base(dest))
 		case "keep-both":

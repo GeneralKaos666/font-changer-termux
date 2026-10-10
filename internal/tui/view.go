@@ -105,7 +105,7 @@ func (d fontDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		name = truncateCells(name, room)
 	}
 	title := highlightMatch(name, d.query)
-	descPlain := fmt.Sprintf("%s · %s · %s", fi.entry.Family, fi.entry.Style, humanSize(fi.entry.Size))
+	descPlain := entrySummary(fi.entry)
 	if d.width > 0 {
 		descPlain = truncateCells(descPlain, d.width)
 	}
@@ -153,6 +153,11 @@ func humanSize(n int64) string {
 	return fmt.Sprintf("%.0f KB", float64(n)/1024)
 }
 
+// entrySummary renders the "Family · Style · Size" descriptor line.
+func entrySummary(e scan.FontEntry) string {
+	return fmt.Sprintf("%s · %s · %s", e.Family, e.Style, humanSize(e.Size))
+}
+
 // boxInnerWidth is the content width inside the preview box.
 func (m Model) boxInnerWidth() int {
 	if m.previewW > 0 {
@@ -196,7 +201,7 @@ func (m Model) PreviewPane() string {
 		lines = append(lines, "", "No font selected.")
 	} else {
 		lines = append(lines, "", truncateCells(e.Name, inner),
-			truncateCells(fmt.Sprintf("%s · %s · %s", e.Family, e.Style, humanSize(e.Size)), inner))
+			truncateCells(entrySummary(e), inner))
 		if d, err := scan.Describe(e.Path); err == nil {
 			ver := d.Version
 			if ver == "" {
@@ -291,6 +296,9 @@ func (m Model) View() string {
 	if m.overlay == overlayImport {
 		b.WriteString(boxStyle.Width(max(w-4, 30)).Render("Import font path:\n"+m.importInput.View()) + "\n")
 	}
+	if m.overlay == overlayImportClash {
+		b.WriteString(boxStyle.Width(max(w-4, 30)).Render("File already exists:\n[i] keep both  [r] replace  [esc] cancel") + "\n")
+	}
 
 	status := m.status
 	if status == "" {
@@ -363,10 +371,56 @@ func (m Model) downloadBox(width int) string {
 		b.WriteString(statusStyle.Render("  no matches") + "\n")
 	}
 	if m.dlActive {
-		b.WriteString("\n" + m.spinner.View() + " Downloading " + m.dlName + "… (no progress info)\n")
+		line := " Downloading " + m.dlName + "…"
+		if !m.dlKnown {
+			line += " (no progress info)"
+		}
+		b.WriteString("\n" + m.spinner.View() + line + "\n")
 		b.WriteString(m.progress.ViewAs(m.dlProgress) + "\n")
 	}
 
 	contentH := max(m.band-2, 1)
 	return boxStyle.Width(width).Render(fitLines(b.String(), contentH))
+}
+
+func (m *Model) sizeWidgets() {
+	// Two columns share the width; title + status + help reserve three
+	// rows, and the rest is the column band. Each box adds a border plus
+	// a 1-cell padding on both sides, so children get a 2-cell margin.
+	w := m.width
+	if w <= 0 {
+		w = 96
+	}
+	total := max(w-8, 40)
+	m.leftW = total * 2 / 5    // left box content width
+	m.rightW = total - m.leftW // right box content width
+
+	m.band = 28
+	if m.height > 0 {
+		m.band = max(m.height-3, 4)
+	}
+
+	previewOuter, listOuter := m.band, m.band
+	if m.overlay == overlayDownload {
+		// Download box fills the left column; the right column stacks
+		// preview over the library list.
+		previewOuter = max(m.band*2/5, 3)
+		listOuter = max(m.band-previewOuter, 2)
+	}
+	m.previewW = max(m.rightW-2, 8)
+	m.previewH = max(previewOuter-2, 1)
+	m.listRows = max(listOuter-2-1, 1) // minus border and filter line
+
+	listInner := max(m.leftW-2, 8)
+	filterBox := m.leftW
+	if m.overlay == overlayDownload {
+		listInner = max(m.rightW-2, 8)
+		filterBox = m.rightW
+	}
+	m.filter.Width = max(filterBox-8, 8)
+	m.dlFilter.Width = max(m.leftW-4, 8)
+	m.list.SetSize(listInner, m.listRows)
+	m.delegate.width = listInner
+	m.list.SetDelegate(m.delegate)
+	m.progress.Width = max(m.rightW, 20)
 }

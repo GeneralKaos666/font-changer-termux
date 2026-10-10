@@ -3,17 +3,11 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
 
 	"termux-fonts-go/internal/apply"
-	"termux-fonts-go/internal/downloader"
-	"termux-fonts-go/internal/importer"
+	"termux-fonts-go/internal/paths"
 	"termux-fonts-go/internal/scan"
 )
-
-func baseName(p string) string { return filepath.Base(p) }
 
 func (m *Model) rescan() {
 	entries, err := scan.ListLibrary()
@@ -27,9 +21,9 @@ func (m *Model) rescan() {
 }
 
 func (m *Model) cycleSlot() {
-	for i, s := range slotOrder {
+	for i, s := range paths.SlotNames {
 		if s == m.slot {
-			m.slot = slotOrder[(i+1)%len(slotOrder)]
+			m.slot = paths.SlotNames[(i+1)%len(paths.SlotNames)]
 			break
 		}
 	}
@@ -58,12 +52,15 @@ func (m *Model) doPreview() {
 
 func (m *Model) doCommit() {
 	if apply.IsPreviewDirty(m.state) {
+		// The toast must name the committed (previewed) font and slot;
+		// CommitPreview clears Preview, so read both before the call.
+		src, slot := m.state.Preview.Src, m.state.Preview.Slot
 		target := apply.CommitPreview(m.state)
 		if target == "" {
 			m.status = "Nothing to commit"
 			return
 		}
-		m.status = fmt.Sprintf("Kept %s → %s slot", baseName(target), m.slot) + reloadHint()
+		m.status = fmt.Sprintf("Kept %s → %s slot", filepath.Base(src), slot) + reloadHint()
 		return
 	}
 	e, ok := m.selectedEntry()
@@ -76,27 +73,7 @@ func (m *Model) doCommit() {
 		m.status = "Install failed: " + err.Error()
 		return
 	}
-	m.status = fmt.Sprintf("Installed %s → %s", baseName(target), m.slot) + reloadHint()
-}
-
-// fetchCmd downloads a Nerd Font off the Elm loop; completion (or any
-// error) returns as a downloadDoneMsg, never a crash.
-func fetchCmd(name string, gen int) tea.Cmd {
-	return func() tea.Msg {
-		dest, err := downloader.Fetch(name, false)
-		return downloadDoneMsg{path: dest, err: err, gen: gen}
-	}
-}
-
-// importCmd copies an external font into the library as a message.
-func importCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		if strings.TrimSpace(path) == "" {
-			return importDoneMsg{err: fmt.Errorf("type a font file path first")}
-		}
-		dest, err := importer.ImportFile(path, "keep-both")
-		return importDoneMsg{path: dest, err: err}
-	}
+	m.status = fmt.Sprintf("Installed %s → %s", filepath.Base(target), m.slot) + reloadHint()
 }
 
 func clamp01(f float64) float64 {

@@ -4,6 +4,7 @@ package apply
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,26 +114,43 @@ func EnsureBackupOnce(target string) (string, error) {
 	return dest, nil
 }
 
-// copyPreservingMode copies src to dst and keeps the source file mode.
+// copyPreservingMode copies src to dst atomically (temp sibling + rename)
+// and keeps the source file mode, so an interrupted copy never leaves a
+// truncated destination. When dst is a symlink, the symlink's target is
+// what gets replaced; the symlink itself survives.
 func copyPreservingMode(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
+	resolved := dst
+	if r, err := filepath.EvalSymlinks(dst); err == nil {
+		resolved = r
 	}
 	fi, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(dst, data, fi.Mode().Perm()); err != nil {
+	in, err := os.Open(src)
+	if err != nil {
 		return err
 	}
-	return os.Chmod(dst, fi.Mode().Perm())
+	defer in.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(resolved), ".apply-*.part")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // no-op once the rename below succeeds
+	if _, err := io.Copy(tmp, in); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), fi.Mode().Perm()); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), resolved)
 }
 
 func checkedTarget(src, slot string) (string, error) {
-	if _, ok := paths.SlotFiles[slot]; !ok {
-		return "", fmt.Errorf("unknown slot: %q", slot)
-	}
 	ok, reason := validate.IsValidFont(src)
 	if !ok {
 		return "", fmt.Errorf("invalid font: %s", reason)

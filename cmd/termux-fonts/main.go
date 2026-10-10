@@ -52,6 +52,18 @@ func ensureBuiltinSeed() string {
 	return dest
 }
 
+// casefoldHits returns every entry whose Name equals name
+// case-insensitively, in library order.
+func casefoldHits(entries []scan.FontEntry, name string) []scan.FontEntry {
+	var hits []scan.FontEntry
+	for _, e := range entries {
+		if strings.EqualFold(e.Name, name) {
+			hits = append(hits, e)
+		}
+	}
+	return hits
+}
+
 // resolveMatch finds the library entry named name: an exact hit wins,
 // otherwise a case-insensitive hit wins. It returns the entry plus
 // (ambiguous, found): ambiguous when several case-insensitive names
@@ -62,13 +74,7 @@ func resolveMatch(entries []scan.FontEntry, name string) (scan.FontEntry, bool, 
 			return e, false, true
 		}
 	}
-	var hits []scan.FontEntry
-	for _, e := range entries {
-		if strings.EqualFold(e.Name, name) {
-			hits = append(hits, e)
-		}
-	}
-	switch len(hits) {
+	switch hits := casefoldHits(entries, name); len(hits) {
 	case 0:
 		return scan.FontEntry{}, false, false
 	case 1:
@@ -76,15 +82,6 @@ func resolveMatch(entries []scan.FontEntry, name string) (scan.FontEntry, bool, 
 	default:
 		return scan.FontEntry{}, true, true
 	}
-}
-
-func slotNames() []string {
-	names := make([]string, 0, len(paths.SlotFiles))
-	for s := range paths.SlotFiles {
-		names = append(names, s)
-	}
-	sort.Strings(names)
-	return names
 }
 
 func runList(entries []scan.FontEntry) {
@@ -101,10 +98,8 @@ func runApply(entries []scan.FontEntry, name, slot string) int {
 	}
 	if ambiguous {
 		names := []string{}
-		for _, e := range entries {
-			if strings.EqualFold(e.Name, name) {
-				names = append(names, e.Name)
-			}
+		for _, e := range casefoldHits(entries, name) {
+			names = append(names, e.Name)
 		}
 		sort.Strings(names)
 		fmt.Fprintf(os.Stderr, "ambiguous font %q; matches: %s\n", name, strings.Join(names, ", "))
@@ -136,8 +131,8 @@ func realMain(argv []string) int {
 	if err := fs.Parse(argv); err != nil {
 		return 2
 	}
-	if _, ok := paths.SlotFiles[*slot]; !ok {
-		fmt.Fprintf(os.Stderr, "unknown font slot: %q (choose from %s)\n", *slot, strings.Join(slotNames(), ", "))
+	if _, err := paths.FontSlotPath(*slot); err != nil {
+		fmt.Fprintf(os.Stderr, "%v (choose from %s)\n", err, strings.Join(paths.SlotNames, ", "))
 		return 2
 	}
 	entries, err := scan.ListLibrary()

@@ -51,6 +51,19 @@ func TestResolveMatch_Unknown(t *testing.T) {
 	}
 }
 
+func TestCasefoldHits(t *testing.T) {
+	got := casefoldHits(entries("B.ttf", "b.TTF", "A.ttf"), "b.ttf")
+	want := []string{"B.ttf", "b.TTF"}
+	if len(got) != len(want) {
+		t.Fatalf("casefoldHits = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].Name != want[i] {
+			t.Fatalf("casefoldHits[%d] = %q, want %q", i, got[i].Name, want[i])
+		}
+	}
+}
+
 func TestSeed_EmptyLibrary(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TERMUX_HOME", dir)
@@ -94,5 +107,13 @@ func TestRealMain_ApplyUnknownIsExit2(t *testing.T) {
 	t.Setenv("TERMUX_HOME", dir)
 	if got := realMain([]string{"--apply", "nope.ttf"}); got != 2 {
 		t.Fatalf("realMain(--apply nope.ttf) = %d, want 2", got)
+	}
+}
+
+func TestRealMain_UnknownSlotIsExit2(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TERMUX_HOME", dir)
+	if got := realMain([]string{"--apply", "Hack.ttf", "--slot", "bogus"}); got != 2 {
+		t.Fatalf("realMain(--apply Hack.ttf --slot bogus) = %d, want 2", got)
 	}
 }

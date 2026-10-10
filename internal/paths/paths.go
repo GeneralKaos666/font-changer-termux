@@ -21,6 +21,10 @@ var SlotFiles = map[string]string{
 // SLOT_FILES is an alias of SlotFiles for consumers using the Python-style name.
 var SLOT_FILES = SlotFiles
 
+// SlotNames is the canonical slot order — the s-key cycle and the CLI
+// help text both derive from it.
+var SlotNames = []string{"regular", "bold", "italic", "bold-italic"}
+
 // TermuxDir returns the Termux configuration directory (~/.termux).
 // The TERMUX_HOME environment variable wins when set and non-empty,
 // otherwise it falls back to $HOME/.termux.
@@ -58,3 +62,6 @@ func FontSlotPath(slot string) (string, error) {
 func BackupsDir() string {
 	return filepath.Join(TermuxDir(), "backups")
 }
+
+// ColorsPath is the Termux colors.properties file.
+func ColorsPath() string { return filepath.Join(TermuxDir(), "colors.properties") }

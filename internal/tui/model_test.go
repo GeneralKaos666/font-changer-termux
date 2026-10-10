@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"termux-fonts-go/internal/apply"
+	"termux-fonts-go/internal/downloader"
 	"termux-fonts-go/internal/paths"
 	"termux-fonts-go/internal/scan"
 )
@@ -66,6 +67,28 @@ func updateModel(t *testing.T, m Model, msg tea.Msg) Model {
 
 func keyRunes(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+func TestModel_CycleSlot(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	if m.slot != "regular" {
+		t.Fatalf("initial slot = %q, want regular", m.slot)
+	}
+	m = updateModel(t, m, keyRunes("s"))
+	if m.slot != "bold" {
+		t.Fatalf("slot after one s = %q, want bold", m.slot)
+	}
+	// Four presses is a full cycle through the four slots.
+	for i := 0; i < 3; i++ {
+		m = updateModel(t, m, keyRunes("s"))
+	}
+	if m.slot != "regular" {
+		t.Fatalf("slot after four s presses = %q, want regular", m.slot)
+	}
 }
 
 func TestModel_FilterNarrowsList(t *testing.T) {
@@ -146,9 +169,12 @@ func TestDownload_ShowsProgress(t *testing.T) {
 		t.Fatal("downloadStartMsg did not mark download active")
 	}
 
-	m = updateModel(t, m, downloadProgressMsg(0.5))
+	m = updateModel(t, m, downloadProgressMsg{frac: 0.5, gen: m.dlGen, known: true})
 	if got := m.DownloadProgress(); got != 0.5 {
 		t.Fatalf("download progress = %v, want 0.5", got)
+	}
+	if strings.Contains(m.status, "no progress info") {
+		t.Fatalf("status after measured progress = %q, want the indeterminate wording dropped", m.status)
 	}
 	if !m.Downloading() {
 		t.Fatal("download dismissed before done")
@@ -160,6 +186,50 @@ func TestDownload_ShowsProgress(t *testing.T) {
 	}
 	if got := m.DownloadProgress(); got != 0 {
 		t.Fatalf("progress after done = %v, want 0", got)
+	}
+}
+
+// TestDownload_StaleProgressIgnored pins generation filtering: progress
+// from a dismissed or superseded fetch must not move the bar or touch
+// the status line.
+func TestDownload_StaleProgressIgnored(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	m = updateModel(t, m, downloadStartMsg{name: "Hack-Regular"})
+	if !m.Downloading() {
+		t.Fatal("downloadStartMsg did not mark download active")
+	}
+	status := m.status
+
+	m = updateModel(t, m, downloadProgressMsg{frac: 0.7, gen: m.dlGen - 1, known: true})
+	if got := m.DownloadProgress(); got != 0 {
+		t.Fatalf("stale progress moved the bar to %v, want 0", got)
+	}
+	if m.status != status {
+		t.Fatalf("stale progress rewrote status: %q → %q", status, m.status)
+	}
+}
+
+// TestDownload_PollReArm pins the poll pipeline: downloadStartMsg hands
+// back the first channel read, and every current progress message arms
+// the next read. The cmds are never executed — running one would block
+// on (or trigger) the real fetch and break hermiticity.
+func TestDownload_PollReArm(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	next, cmd := m.Update(downloadStartMsg{name: "Hack-Regular"})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("downloadStartMsg returned no cmd (channel read missing)")
+	}
+	next, cmd = m.Update(downloadProgressMsg{frac: 0.5, gen: m.dlGen, known: true})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("progress message returned no re-arm cmd (poll would stop)")
 	}
 }
 
@@ -182,33 +252,27 @@ func TestNewModel_SurfacesLibraryLoadError(t *testing.T) {
 	}
 }
 
-func TestQuit_RestoreFailureStaysOpen(t *testing.T) {
+func TestQuit_RestoreFailureStillQuits(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
-	seedLibrary(t, "Hack.ttf", "JetBrainsMono.ttf")
+	seedLibrary(t, "Hack.ttf")
 
 	m := NewModel()
-	m = updateModel(t, m, keyRunes(" "))
-	if !m.Dirty() {
-		t.Fatalf("space did not preview; status=%q", m.status)
-	}
-
+	m = updateModel(t, m, keyRunes(" ")) // preview → dirty
 	old := restoreOriginal
-	restoreOriginal = func(*apply.SessionState) (bool, error) {
-		return false, errors.New("boom")
-	}
+	restoreOriginal = func(*apply.SessionState) (bool, error) { return false, errors.New("boom") }
 	defer func() { restoreOriginal = old }()
 
-	next, cmd := m.Update(keyRunes("q"))
+	next, cmd := m.Update(keyRunes("q")) // q with failed restore
 	m = next.(Model)
-	if cmd != nil {
-		t.Fatal("q with failed restore quit instead of staying open")
+	if cmd == nil {
+		t.Fatal("q with failed restore must still quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("q cmd returned %T, want tea.QuitMsg", cmd())
 	}
 	if !strings.Contains(m.status, "Restore failed") {
 		t.Fatalf("status = %q, want restore failure text", m.status)
-	}
-	if !m.Dirty() {
-		t.Fatal("failed restore cleared the dirty flag")
 	}
 
 	restoreOriginal = old
@@ -462,9 +526,15 @@ func TestPrompt_InjectedLinesAppear(t *testing.T) {
 }
 
 // Keep NewModel hermetic: no real shell capture in tests (per-test
-// overrides still work by reassigning capturePromptLines).
+// overrides still work by reassigning capturePromptLines), and no real
+// network when a test drives downloadStartMsg — startFetch spawns its
+// fetch goroutine eagerly (per-test overrides still work by reassigning
+// fetchFont).
 func TestMain(m *testing.M) {
 	capturePromptLines = func() []string { return nil }
+	fetchFont = func(string, bool, downloader.ProgressFunc) (string, error) {
+		return filepath.Join(os.TempDir(), "stub-font.ttf"), nil
+	}
 	os.Exit(m.Run())
 }
 
@@ -480,6 +550,23 @@ func TestTruncateCells_WidthAware(t *testing.T) {
 	}
 }
 
+func TestCommit_ToastNamesCommittedSlot(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	m = updateModel(t, m, keyRunes(" ")) // preview into slot "regular"
+	m = updateModel(t, m, keyRunes("s")) // cycle slot to "bold"
+	m = updateModel(t, m, keyRunes("enter"))
+	if got := m.status; !strings.Contains(got, "Kept Hack.ttf → regular slot") {
+		t.Fatalf("commit status = %q, want it to name the committed regular slot", got)
+	}
+	if strings.Contains(m.status, "bold slot") {
+		t.Fatalf("commit status names the current slot instead of the committed one: %q", m.status)
+	}
+}
+
 func TestLayout_TilesTerminalHeight(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
@@ -491,5 +578,274 @@ func TestLayout_TilesTerminalHeight(t *testing.T) {
 	view := m.View()
 	if h := lipgloss.Height(view); h != 40 {
 		t.Fatalf("view height = %d, want 40 (terminal height)", h)
+	}
+}
+
+// stageFont writes the valid fixture to a temp path outside the library.
+func stageFont(t *testing.T, name string) string {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(src, fixtureBytes(t, "a.ttf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return src
+}
+
+// writeLibraryFont plants data directly in the library under name.
+func writeLibraryFont(t *testing.T, name string, data []byte) string {
+	t.Helper()
+	dir := paths.FontsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// runCmd executes a command through Update and returns the new model.
+func runCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected a command, got nil")
+	}
+	return updateModel(t, m, cmd())
+}
+
+// pressEnter presses enter and runs the resulting command (the import
+// flow always returns importCmd from its enter key).
+func pressEnter(t *testing.T, m Model) Model {
+	t.Helper()
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	return runCmd(t, next.(Model), cmd)
+}
+
+// pressKey sends a rune key and runs the command it produced (the clash
+// prompt's resolution keys return importCmd).
+func pressKey(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	next, cmd := m.Update(keyRunes(s))
+	return runCmd(t, next.(Model), cmd)
+}
+
+// openImport types the import overlay path without submitting it.
+func openImport(t *testing.T, m Model, path string) Model {
+	t.Helper()
+	m = updateModel(t, m, keyRunes("i"))
+	if m.overlay != overlayImport {
+		t.Fatalf("i did not open the import overlay (overlay=%v)", m.overlay)
+	}
+	return updateModel(t, m, keyRunes(path))
+}
+
+func TestImport_Flow(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	src := stageFont(t, "newfont.ttf")
+	m = openImport(t, m, src)
+	m = pressEnter(t, m)
+	if !strings.HasPrefix(m.status, "Imported ") {
+		t.Fatalf("status = %q, want it to start with %q", m.status, "Imported ")
+	}
+	if m.overlay != overlayNone {
+		t.Fatalf("overlay = %v after import, want overlayNone", m.overlay)
+	}
+	if got := len(m.VisibleEntries()); got != 1 {
+		t.Fatalf("visible entries = %d, want 1 (library gained the font)", got)
+	}
+	if _, err := os.Stat(filepath.Join(paths.FontsDir(), "newfont.ttf")); err != nil {
+		t.Fatalf("library missing the imported font: %v", err)
+	}
+}
+
+func TestImport_ClashPromptKeepBoth(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	original := fixtureBytes(t, "b.ttf")
+	writeLibraryFont(t, "newfont.ttf", original)
+	src := stageFont(t, "newfont.ttf")
+
+	m := NewModel()
+	m = openImport(t, m, src)
+	m = pressEnter(t, m)
+	if m.overlay != overlayImportClash {
+		t.Fatalf("overlay = %v after a clashing import, want overlayImportClash", m.overlay)
+	}
+	if !strings.Contains(m.status, "File exists") {
+		t.Fatalf("status = %q, want it to announce the clash", m.status)
+	}
+	if m.pendingImportPath != src {
+		t.Fatalf("pendingImportPath = %q, want the source path %q", m.pendingImportPath, src)
+	}
+	view := m.View()
+	for _, want := range []string{"File already exists", "keep both", "replace"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("clash prompt missing %q:\n%s", want, view)
+		}
+	}
+
+	m = pressKey(t, m, "1")
+	if !strings.HasPrefix(m.status, "Imported ") {
+		t.Fatalf("status after keep-both = %q, want it to start with %q", m.status, "Imported ")
+	}
+	if m.overlay != overlayNone {
+		t.Fatalf("overlay = %v after resolution, want overlayNone", m.overlay)
+	}
+	kept, err := os.ReadFile(filepath.Join(paths.FontsDir(), "newfont-1.ttf"))
+	if err != nil {
+		t.Fatalf("keep-both did not create newfont-1.ttf: %v", err)
+	}
+	if string(kept) != string(fixtureBytes(t, "a.ttf")) {
+		t.Fatal("kept file content differs from the imported fixture")
+	}
+	still, err := os.ReadFile(filepath.Join(paths.FontsDir(), "newfont.ttf"))
+	if err != nil || string(still) != string(original) {
+		t.Fatalf("pre-existing library file changed (err=%v)", err)
+	}
+}
+
+func TestImport_ClashPromptReplace(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	original := fixtureBytes(t, "b.ttf")
+	writeLibraryFont(t, "newfont.ttf", original)
+	src := stageFont(t, "newfont.ttf")
+
+	m := NewModel()
+	m = openImport(t, m, src)
+	m = pressEnter(t, m)
+	if m.overlay != overlayImportClash {
+		t.Fatalf("overlay = %v after a clashing import, want overlayImportClash", m.overlay)
+	}
+
+	m = pressKey(t, m, "2")
+	if !strings.HasPrefix(m.status, "Imported ") {
+		t.Fatalf("status after replace = %q, want it to start with %q", m.status, "Imported ")
+	}
+	got, err := os.ReadFile(filepath.Join(paths.FontsDir(), "newfont.ttf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(fixtureBytes(t, "a.ttf")) {
+		t.Fatal("library file was not replaced with the imported fixture")
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(paths.FontsDir(), "newfont-1.ttf")); len(leftovers) != 0 {
+		t.Fatalf("replace must not create a keep-both sibling, found %v", leftovers)
+	}
+}
+
+func TestImport_ClashPromptLetterKeys(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	writeLibraryFont(t, "newfont.ttf", fixtureBytes(t, "b.ttf"))
+	src := stageFont(t, "newfont.ttf")
+
+	m := NewModel()
+	m = openImport(t, m, src)
+	m = pressEnter(t, m)
+	m = pressKey(t, m, "r") // alias for 2 (replace)
+	if !strings.HasPrefix(m.status, "Imported ") {
+		t.Fatalf("status after r = %q, want it to start with %q", m.status, "Imported ")
+	}
+	got, err := os.ReadFile(filepath.Join(paths.FontsDir(), "newfont.ttf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(fixtureBytes(t, "a.ttf")) {
+		t.Fatal("r did not resolve the clash by replacement")
+	}
+}
+
+func TestImport_ClashPromptCancel(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	original := fixtureBytes(t, "b.ttf")
+	writeLibraryFont(t, "newfont.ttf", original)
+	src := stageFont(t, "newfont.ttf")
+
+	m := NewModel()
+	m = openImport(t, m, src)
+	m = pressEnter(t, m)
+	if m.overlay != overlayImportClash {
+		t.Fatalf("overlay = %v, want overlayImportClash", m.overlay)
+	}
+
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.status != "Import cancelled" {
+		t.Fatalf("status = %q, want %q", m.status, "Import cancelled")
+	}
+	if m.overlay != overlayNone {
+		t.Fatalf("overlay = %v after cancel, want overlayNone", m.overlay)
+	}
+	fonts, _ := filepath.Glob(filepath.Join(paths.FontsDir(), "*.ttf"))
+	if len(fonts) != 1 || filepath.Base(fonts[0]) != "newfont.ttf" {
+		t.Fatalf("library after cancel = %v, want only the pre-existing newfont.ttf", fonts)
+	}
+	still, err := os.ReadFile(filepath.Join(paths.FontsDir(), "newfont.ttf"))
+	if err != nil || string(still) != string(original) {
+		t.Fatalf("pre-existing library file changed on cancel (err=%v)", err)
+	}
+}
+
+func TestImport_MissingPath(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	missing := filepath.Join(t.TempDir(), "missing.ttf")
+	m = openImport(t, m, missing)
+	m = pressEnter(t, m)
+	if !strings.HasPrefix(m.status, "Import failed") {
+		t.Fatalf("status = %q, want it to start with %q", m.status, "Import failed")
+	}
+	if m.overlay != overlayNone {
+		t.Fatalf("overlay = %v after a failed import, want overlayNone", m.overlay)
+	}
+}
+
+func TestImport_HomeExpansion(t *testing.T) {
+	root := useTermuxHome(t)
+	noReload(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "import.ttf"), fixtureBytes(t, "a.ttf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel()
+	m = openImport(t, m, "~/import.ttf")
+	m = pressEnter(t, m)
+	if !strings.HasPrefix(m.status, "Imported ") {
+		t.Fatalf("status = %q, want it to start with %q", m.status, "Imported ")
+	}
+	if _, err := os.Stat(filepath.Join(paths.FontsDir(), "import.ttf")); err != nil {
+		t.Fatalf("font did not land in the TERMUX_HOME library: %v (root=%s)", err, root)
+	}
+}
+
+func TestImport_TabCompletesPath(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "newfont.ttf")
+	if err := os.WriteFile(src, fixtureBytes(t, "a.ttf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel()
+	m = openImport(t, m, filepath.Join(dir, "newfo"))
+	if got, want := m.importInput.Value(), filepath.Join(dir, "newfo"); got != want {
+		t.Fatalf("typed input = %q, want %q", got, want)
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.importInput.Value(); got != src {
+		t.Fatalf("input after tab = %q, want it completed to %q", got, src)
+	}
+	if m.overlay != overlayImport {
+		t.Fatalf("tab left overlay %v, want overlayImport", m.overlay)
 	}
 }
