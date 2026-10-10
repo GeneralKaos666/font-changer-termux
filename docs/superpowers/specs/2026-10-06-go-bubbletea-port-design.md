@@ -103,7 +103,9 @@ Keyboard-first Lip Gloss treatment, no mouse required:
 - Preview pane: a name + style header over a dim dotted rule, the large
   `AaBbCc 0123456789` sample block, the Nerd/powerline coverage row, a dim
   rule, a two-column metadata grid (`glyphs`, `UPM`, `version`, `slot`,
-  `file`, `backup`), and the live shell-prompt lines (mock fallback).
+  `file`, `backup`), and the live shell-prompt lines (mock fallback). On a
+  short pane the decorative rules and grid drop first, so the header, sample
+  and prompt — the point of the preview — always survive.
 - Library list: a `⌕` search prompt with a dim right-aligned count; rows
   carry the family/style/size summary and an accent `● slot` badge; the
   selected row carries both an accent background and a `▶` cursor marker,

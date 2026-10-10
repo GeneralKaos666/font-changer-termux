@@ -20,7 +20,9 @@ grid and dotted rules, now arranged as a vertical stack.
 - **Preview content** — name + style header, dim dotted rule, the two
   `AaBbCc` samples, Nerd/powerline coverage, a dim rule, a two-column
   metadata grid (`glyphs`, `UPM`, `version`, `slot`, `file`, `backup`), and
-  the live shell prompt (mock fallback).
+  the live shell prompt (mock fallback). Lines carry a drop priority so a
+  short pane loses the rules and grid first and keeps the header, sample
+  and prompt.
 - **Library** — a `⌕` search prompt with a dim right-aligned count, the
   `● slot` badge, and the accent `▶` selection marker.
 - **Download** — the picker swaps into the lower pane; its visible window

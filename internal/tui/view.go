@@ -291,10 +291,20 @@ func (m Model) previewBox() string {
 	return titledBox("Preview", m.PreviewPane(), m.contentW)
 }
 
+// previewLine is one line of the preview plus its drop priority when the
+// pane is too short to show everything: 0 is essential (never dropped before
+// anything else), higher numbers go first.
+type previewLine struct {
+	text string
+	prio int
+}
+
 // PreviewPane renders the rich preview: a name/style header, a large sample
 // with Nerd/powerline coverage, an aligned metadata grid (glyphs, UPM,
 // version, slot, file, backup) and the live shell prompt. Every line is
 // truncated to the box width (cell-aware) and padded to the target height.
+// When the pane is short, decorative and grid lines are dropped before the
+// shells prompt, so the preview's whole point survives.
 func (m Model) PreviewPane() string {
 	inner := m.boxInnerWidth()
 	e, ok := m.selectedEntry()
@@ -302,16 +312,17 @@ func (m Model) PreviewPane() string {
 	if ok {
 		name, style = e.Name, e.Style
 	}
-	lines := []string{
-		spread(sampleStyle.Render(truncateCells(name, max(inner-10, 8))), slotStyle.Render(truncateCells(style, 8)), inner),
-		rule(inner),
-		sampleStyle.Render(truncateCells("AaBbCc 0123456789", inner)),
-		truncateCells("AaBbCcDdEeFfGg 0123456789 !?#@%", inner),
-		truncateCells(coverageLine(), inner),
-		rule(inner),
-	}
+	var lines []previewLine
+	add := func(prio int, s string) { lines = append(lines, previewLine{s, prio}) }
+	add(0, spread(sampleStyle.Render(truncateCells(name, max(inner-10, 8))), slotStyle.Render(truncateCells(style, 8)), inner))
+	add(2, rule(inner))
+	add(0, sampleStyle.Render(truncateCells("AaBbCc 0123456789", inner)))
+	add(1, truncateCells("AaBbCcDdEeFfGg 0123456789 !?#@%", inner))
+	add(1, truncateCells(coverageLine(), inner))
+	add(2, rule(inner))
 	if !ok {
-		lines = append(lines, "", "No font selected.")
+		add(2, "")
+		add(2, "No font selected.")
 	} else {
 		backup := "none"
 		if m.state != nil && m.state.BackedUp[m.slot] {
@@ -326,14 +337,12 @@ func (m Model) PreviewPane() string {
 			glyphs = fmt.Sprintf("%d", m.detail.Glyphs)
 			upm = fmt.Sprintf("%d", m.detail.UPM)
 		}
-		lines = append(lines,
-			metaLine(inner, "glyphs", glyphs, "UPM", upm),
-			metaLine(inner, "version", ver, "slot", m.slot),
-			metaLine(inner, "file", paths.SlotFiles[m.slot], "backup", backup),
-		)
+		add(3, metaLine(inner, "glyphs", glyphs, "UPM", upm))
+		add(3, metaLine(inner, "version", ver, "slot", m.slot))
+		add(3, metaLine(inner, "file", paths.SlotFiles[m.slot], "backup", backup))
 	}
 	if m.Dirty() {
-		lines = append(lines, promptStyle.Render(truncateCells("preview — Enter keeps, Esc restores", inner)))
+		add(1, promptStyle.Render(truncateCells("preview — Enter keeps, Esc restores", inner)))
 	}
 	// Live shell prompt when captured (raw ANSI passes through, so it renders
 	// pixel-for-pixel), mock fallback otherwise. Either way the terminal's
@@ -341,20 +350,57 @@ func (m Model) PreviewPane() string {
 	if len(m.prompt) > 0 {
 		for _, ln := range m.prompt {
 			// Re-append a reset: truncation may cut the line's own one.
-			lines = append(lines, truncateCells(ln, inner)+"\x1b[0m")
+			add(0, truncateCells(ln, inner)+"\x1b[0m")
 		}
 	} else {
 		for _, ln := range mockPromptLines() {
-			lines = append(lines, promptStyle.Render(truncateCells(ln, inner)))
+			add(0, promptStyle.Render(truncateCells(ln, inner)))
 		}
 	}
-	for len(lines) < m.previewH {
-		lines = append(lines, "")
+
+	// previewH == 0 means "no budget" (direct PreviewPane calls): show all.
+	var out []string
+	if m.previewH > 0 {
+		out = selectPreview(lines, m.previewH)
+	} else {
+		out = make([]string, 0, len(lines))
+		for _, ln := range lines {
+			out = append(out, ln.text)
+		}
 	}
-	if m.previewH > 0 && len(lines) > m.previewH {
-		lines = lines[:m.previewH]
+	for len(out) < m.previewH {
+		out = append(out, "")
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(out, "\n")
+}
+
+// selectPreview keeps at most h lines, dropping the least essential first
+// (highest priority number, later lines winning ties) so the shell prompt
+// and sample stay put on a short terminal.
+func selectPreview(lines []previewLine, h int) []string {
+	keep := make([]bool, len(lines))
+	for i := range keep {
+		keep[i] = true
+	}
+	for count := len(lines); count > h; count-- {
+		worst := -1
+		for i, ln := range lines {
+			if keep[i] && (worst == -1 || ln.prio >= lines[worst].prio) {
+				worst = i
+			}
+		}
+		if worst < 0 {
+			break
+		}
+		keep[worst] = false
+	}
+	out := make([]string, 0, len(lines))
+	for i, ln := range lines {
+		if keep[i] {
+			out = append(out, ln.text)
+		}
+	}
+	return out
 }
 
 // spread lays left and right on one line, right flush to width.

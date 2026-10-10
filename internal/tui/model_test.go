@@ -359,6 +359,33 @@ func TestPreviewPane_ShowsDetailsAndPrompt(t *testing.T) {
 	}
 }
 
+// A short preview must keep the shell prompt and sample, dropping the
+// decorative rules and metadata grid instead. Every pane it renders is also
+// exactly previewH lines tall.
+func TestPreviewPane_KeepsPromptWhenShort(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	for _, size := range [][2]int{{100, 40}, {60, 24}, {60, 18}, {100, 20}} {
+		m := NewModel()
+		m.width, m.height = size[0], size[1]
+		m.sizeWidgets()
+		if m.previewH == 0 {
+			t.Fatalf("%dx%d folded the preview unexpectedly", size[0], size[1])
+		}
+		pane := m.PreviewPane()
+		for _, want := range []string{"AaBbCc", "❯", "Alpha.ttf"} {
+			if !strings.Contains(pane, want) {
+				t.Fatalf("%dx%d preview dropped %q:\n%s", size[0], size[1], want, pane)
+			}
+		}
+		if h := lipgloss.Height(pane); h != m.previewH {
+			t.Fatalf("%dx%d preview height = %d, want %d", size[0], size[1], h, m.previewH)
+		}
+	}
+}
+
 func TestView_VerticalLayout(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
