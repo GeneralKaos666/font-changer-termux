@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"termux-fonts-go/internal/apply"
-	"termux-fonts-go/internal/paths"
-	"termux-fonts-go/internal/scan"
+	"github.com/GeneralKaos666/font-changer-termux/internal/apply"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
 )
 
 func (m *Model) rescan() {

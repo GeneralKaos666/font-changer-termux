@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"termux-fonts-go/internal/scan"
+	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
 )
 
 func entries(names ...string) []scan.FontEntry {

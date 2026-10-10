@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"termux-fonts-go/internal/downloader"
-	"termux-fonts-go/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/downloader"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
 )
 
 // TestNerdFonts_AllFamiliesRegular pins the expanded catalog: one healthy

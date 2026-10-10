@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"termux-fonts-go/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
 )
 
 func useTermuxHome(t *testing.T) string {

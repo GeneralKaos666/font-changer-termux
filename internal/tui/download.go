@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"termux-fonts-go/internal/downloader"
+	"github.com/GeneralKaos666/font-changer-termux/internal/downloader"
 )
 
 type downloadStartMsg struct{ name string }

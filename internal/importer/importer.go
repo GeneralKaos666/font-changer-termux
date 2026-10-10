@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"termux-fonts-go/internal/paths"
-	"termux-fonts-go/internal/validate"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/validate"
 )
 
 // storageHint explains the shared-storage permission fix, mirroring the

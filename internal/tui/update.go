@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"termux-fonts-go/internal/apply"
-	"termux-fonts-go/internal/importer"
+	"github.com/GeneralKaos666/font-changer-termux/internal/apply"
+	"github.com/GeneralKaos666/font-changer-termux/internal/importer"
 )
 
 // Update routes key, filter and download messages; cursor movement only

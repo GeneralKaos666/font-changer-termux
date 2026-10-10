@@ -13,10 +13,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"termux-fonts-go/internal/apply"
-	"termux-fonts-go/internal/paths"
-	"termux-fonts-go/internal/scan"
-	"termux-fonts-go/internal/tui"
+	"github.com/GeneralKaos666/font-changer-termux/internal/apply"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
+	"github.com/GeneralKaos666/font-changer-termux/internal/tui"
 )
 
 // ensureBuiltinSeed copies the active regular slot file to

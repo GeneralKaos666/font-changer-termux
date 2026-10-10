@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"termux-fonts-go/internal/importer"
-	"termux-fonts-go/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/importer"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
 )
 
 const fixture = "../apply/testdata/a.ttf"

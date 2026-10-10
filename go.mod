@@ -1,4 +1,4 @@
-module termux-fonts-go
+module github.com/GeneralKaos666/font-changer-termux
 
 go 1.26.0
 

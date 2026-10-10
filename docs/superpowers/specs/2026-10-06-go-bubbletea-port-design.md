@@ -35,7 +35,7 @@ metadata line.
 Branch `go-bubbletea`, Go module at repo root on that branch:
 
 ```
-go.mod                            # module termux-fonts-go, go >= 1.23
+go.mod                            # module github.com/GeneralKaos666/font-changer-termux, go >= 1.26
 cmd/termux-fonts/main.go          # argparse-equivalent flags + TUI entry
 internal/paths/paths.go           # TERMUX_HOME-aware dirs, SLOT_FILES
 internal/scan/scan.go             # list_library, read_active, FontEntry

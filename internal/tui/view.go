@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"termux-fonts-go/internal/paths"
-	"termux-fonts-go/internal/scan"
-	"termux-fonts-go/internal/theme"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
+	"github.com/GeneralKaos666/font-changer-termux/internal/theme"
 )
 
 // Restrained palette: accent + muted + default foreground only.

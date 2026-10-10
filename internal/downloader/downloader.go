@@ -16,8 +16,8 @@ import (
 	"sort"
 	"strings"
 
-	"termux-fonts-go/internal/paths"
-	"termux-fonts-go/internal/validate"
+	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
+	"github.com/GeneralKaos666/font-changer-termux/internal/validate"
 )
 
 const nfBase = "https://github.com/ryanoasis/nerd-fonts/raw/v3.2.1/patched-fonts"
