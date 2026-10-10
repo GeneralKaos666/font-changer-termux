@@ -35,6 +35,10 @@ import (
 // FilterMsg sets the list filter to its value and narrows visible items.
 type FilterMsg string
 
+// promptMsg carries the shell-prompt lines captured by the Init command,
+// so the (up to 3s) capture never blocks the first frame.
+type promptMsg []string
+
 type overlay int
 
 const (
@@ -123,12 +127,21 @@ type Model struct {
 	importInput       textinput.Model
 	pendingImportPath string // source path of an import awaiting the clash choice
 
-	previewH int // preview content height (0 = natural)
-	previewW int // preview box content width
-	leftW    int // left column box content width
-	rightW   int // right column box content width
-	listRows int // library list rows inside its box
-	band     int // column band height (box outer height)
+	previewH int  // preview content height (0 = natural)
+	previewW int  // preview box content width
+	leftW    int  // left column box content width
+	rightW   int  // right column box content width
+	contentW int  // full-width content width in single-pane (narrow) mode
+	listRows int  // library list rows inside its box
+	band     int  // column band height (box outer height)
+	narrow   bool // terminal narrower than wideMin: preview folds away
+	tooSmall bool // terminal below the hard minimum: View shows a notice
+
+	// Cached font metadata for the selected entry. View never touches the
+	// disk; syncDetail refreshes this only when the selection changes.
+	detail     scan.FontDetails
+	detailPath string // path the cached detail describes ("" = nothing selected)
+	hasDetail  bool   // detail parsed successfully for detailPath
 
 	prompt []string // live shell prompt lines (nil → mock fallback)
 
@@ -158,12 +171,12 @@ func NewModel() Model {
 	if entries == nil {
 		entries = []scan.FontEntry{}
 	}
-	status := "space preview · enter keep · tab filter"
+	status := "Ready"
 	if loadErr != nil {
 		status = "Library load failed: " + loadErr.Error()
 	}
 	filter := textinput.New()
-	filter.Placeholder = "Filter fonts..."
+	filter.Placeholder = "Filter fonts (tab)"
 	filter.CharLimit = 64
 
 	l := list.New(nil, fontDelegate{}, 40, 14)
@@ -210,7 +223,6 @@ func NewModel() Model {
 		spinner:     sp,
 		progress:    bar,
 		applied:     appliedBadges(entries),
-		prompt:      capturePromptLines(),
 	}
 	m.refreshItems()
 	return m
@@ -219,8 +231,12 @@ func NewModel() Model {
 // InitialModel is the entry point for tea.NewProgram.
 func InitialModel() Model { return NewModel() }
 
-// Init focuses the list (arrows move immediately) and issues no commands.
-func (m Model) Init() tea.Cmd { return nil }
+// Init starts the model: the list is already focused (arrows move
+// immediately), and the shell-prompt capture runs as a command so the
+// first frame is never held up by it.
+func (m Model) Init() tea.Cmd {
+	return func() tea.Msg { return promptMsg(capturePromptLines()) }
+}
 
 // VisibleEntries returns the currently unfiltered-out library entries.
 func (m Model) VisibleEntries() []scan.FontEntry {
@@ -251,9 +267,28 @@ func (m Model) selectedEntry() (scan.FontEntry, bool) {
 	return fi.entry, true
 }
 
-// appliedBadges maps library entry paths to "● slot" badges by comparing
-// file bytes with the live slot files. Size-prefiltered, so the common
-// case costs 4 slot reads and no library hashing.
+// syncDetail refreshes the cached font metadata for the selected entry.
+// It runs from Update (on cursor/filter/library changes), never from
+// View, so rendering stays free of disk I/O even mid-download.
+func (m *Model) syncDetail() {
+	e, ok := m.selectedEntry()
+	if !ok {
+		m.detail = scan.FontDetails{}
+		m.detailPath = ""
+		m.hasDetail = false
+		return
+	}
+	if e.Path == m.detailPath {
+		return // cache hit: same file, same tables
+	}
+	m.detailPath = e.Path
+	d, err := scan.Describe(e.Path)
+	m.detail, m.hasDetail = d, err == nil
+}
+
+// appliedBadges maps library entry paths to "<marker> slot" badges by
+// comparing file bytes with the live slot files. Size-prefiltered, so the
+// common case costs 4 slot reads and no library hashing.
 func appliedBadges(entries []scan.FontEntry) map[string]string {
 	out := map[string]string{}
 	for slot := range paths.SlotFiles {
@@ -278,7 +313,7 @@ func appliedBadges(entries []scan.FontEntry) map[string]string {
 				if out[e.Path] != "" {
 					out[e.Path] += " "
 				}
-				out[e.Path] += "● " + slot
+				out[e.Path] += badgeDot() + " " + slot
 			}
 		}
 	}
@@ -297,4 +332,5 @@ func (m *Model) refreshItems() {
 	m.list.SetItems(items)
 	m.delegate.query = strings.TrimSpace(m.filter.Value())
 	m.list.SetDelegate(m.delegate)
+	m.syncDetail()
 }

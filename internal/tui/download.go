@@ -63,7 +63,8 @@ func (m *Model) clampDownloadWindow() {
 }
 
 // dismissDownload closes the download overlay, orphaning any in-flight
-// fetch so its late completion refreshes quietly.
+// fetch so its late completion refreshes quietly. The orphaned pipeline is
+// drained in the background so its producer can always finish and exit.
 func (m *Model) dismissDownload() (Model, tea.Cmd) {
 	if m.dlActive {
 		m.dlGen++
@@ -71,6 +72,7 @@ func (m *Model) dismissDownload() (Model, tea.Cmd) {
 		m.dlProgress = 0
 		m.dlKnown = false
 		m.overlay = overlayNone
+		m.releaseFetch()
 		m.sizeWidgets()
 		m.status = "Download dismissed — finishing in background"
 		return *m, nil
@@ -79,6 +81,21 @@ func (m *Model) dismissDownload() (Model, tea.Cmd) {
 	m.sizeWidgets()
 	m.status = "Download cancelled"
 	return *m, nil
+}
+
+// releaseFetch detaches the current fetch channel and drains it, so a
+// download the user walked away from can still finish writing to a channel
+// nobody is listening on instead of blocking forever.
+func (m *Model) releaseFetch() {
+	ch := m.dlCh
+	m.dlCh = nil
+	if ch == nil {
+		return
+	}
+	go func() {
+		for range ch {
+		}
+	}()
 }
 
 // fetchFont is a package-level var (rather than a direct

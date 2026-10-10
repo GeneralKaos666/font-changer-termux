@@ -146,3 +146,29 @@ func TestRealMain_VersionPrints(t *testing.T) {
 		t.Fatalf("--version output = %q, want %q", got, want)
 	}
 }
+
+func TestRealMain_HelpIsExit0(t *testing.T) {
+	t.Setenv("TERMUX_HOME", t.TempDir())
+	if got := realMain([]string{"--help"}); got != 0 {
+		t.Fatalf("realMain(--help) = %d, want 0", got)
+	}
+}
+
+func TestRealMain_InteractiveWithoutTTYIsExit2(t *testing.T) {
+	t.Setenv("TERMUX_HOME", t.TempDir())
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w // a pipe is not a character device, so not a TTY
+	code := realMain(nil)
+	os.Stdout = old
+	_ = w.Close()
+	_ = r.Close()
+
+	if code != 2 {
+		t.Fatalf("realMain() without a TTY = %d, want 2", code)
+	}
+}

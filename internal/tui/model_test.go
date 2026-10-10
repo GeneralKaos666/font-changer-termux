@@ -233,6 +233,24 @@ func TestDownload_PollReArm(t *testing.T) {
 	}
 }
 
+// TestDownload_DismissReleasesFetchChannel pins that cancelling a live
+// download detaches the pipeline, so the producer is not left blocked.
+func TestDownload_DismissReleasesFetchChannel(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	m.overlay = overlayDownload
+	m = updateModel(t, m, downloadStartMsg{name: "Hack-Regular"})
+	if m.dlCh == nil {
+		t.Fatal("start did not attach a fetch channel")
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.dlCh != nil {
+		t.Fatal("dismiss left the fetch channel attached")
+	}
+}
+
 func TestNewModel_SurfacesLibraryLoadError(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
@@ -511,7 +529,7 @@ func TestPrompt_FallbackOnBadShell(t *testing.T) {
 	}
 }
 
-func TestPrompt_InjectedLinesAppear(t *testing.T) {
+func TestPrompt_CapturedByInitCommand(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
 	seedLibrary(t, "Hack.ttf")
@@ -519,7 +537,21 @@ func TestPrompt_InjectedLinesAppear(t *testing.T) {
 	capturePromptLines = func() []string { return []string{"\x1b[32m╭─ injected", "╰─❯ test"} }
 	defer func() { capturePromptLines = old }()
 
+	// NewModel must not block on the shell: the capture is deferred to the
+	// Init command, so the first frame renders with the mock prompt.
 	m := NewModel()
+	if m.prompt != nil {
+		t.Fatalf("NewModel captured the prompt synchronously: %q", m.prompt)
+	}
+	if pane := m.PreviewPane(); strings.Contains(pane, "injected") {
+		t.Fatal("prompt appeared before the Init command ran")
+	}
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init returned no prompt-capture command")
+	}
+	m = updateModel(t, m, cmd())
 	if pane := m.PreviewPane(); !strings.Contains(pane, "injected") {
 		t.Fatalf("injected prompt missing:\n%s", pane)
 	}
@@ -891,5 +923,244 @@ func TestImport_TabCompletesPath(t *testing.T) {
 	}
 	if m.overlay != overlayImport {
 		t.Fatalf("tab left overlay %v, want overlayImport", m.overlay)
+	}
+}
+
+func TestQuit_CtrlCRestoresAndQuits(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	m = updateModel(t, m, keyRunes(" ")) // preview → dirty
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+c returned no cmd")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("ctrl+c cmd = %T, want tea.QuitMsg", cmd())
+	}
+	if m.Dirty() {
+		t.Fatal("ctrl+c quit left an uncommitted preview")
+	}
+}
+
+func TestSuspend_CtrlZ(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+	if cmd == nil {
+		t.Fatal("ctrl+z returned no cmd")
+	}
+	if _, ok := cmd().(tea.SuspendMsg); !ok {
+		t.Fatalf("ctrl+z cmd = %T, want tea.SuspendMsg", cmd())
+	}
+}
+
+func TestResume_RescansLibrary(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+
+	m := NewModel()
+	if got := len(m.VisibleEntries()); got != 0 {
+		t.Fatalf("empty library visible entries = %d, want 0", got)
+	}
+	seedLibrary(t, "Hack.ttf") // an external change while suspended
+	m = updateModel(t, m, tea.ResumeMsg{})
+	if got := len(m.VisibleEntries()); got != 1 {
+		t.Fatalf("resume did not re-read the library: got %d entries, want 1", got)
+	}
+}
+
+// TestPreviewPane_CachesDetails pins the no-disk-I/O-in-View contract:
+// once the metadata is cached, a later render must not re-read the file.
+func TestPreviewPane_CachesDetails(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	if !strings.Contains(m.PreviewPane(), "glyphs") {
+		t.Fatal("precondition: detail line missing from the preview")
+	}
+	e, ok := m.selectedEntry()
+	if !ok {
+		t.Fatal("no selected entry")
+	}
+	// Corrupt the file on disk; a cached pane must not re-read it.
+	if err := os.WriteFile(e.Path, []byte("not a font"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.PreviewPane(), "glyphs") {
+		t.Fatal("PreviewPane re-read the font on render instead of using the cache")
+	}
+}
+
+func TestSyncDetail_TracksSelection(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	first := m.detailPath
+	if first == "" {
+		t.Fatal("no detail cached for the initial selection")
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.detailPath == first {
+		t.Fatalf("detailPath still %q after moving the cursor", m.detailPath)
+	}
+	want, _ := m.selectedEntry()
+	if m.detailPath != want.Path {
+		t.Fatalf("detailPath = %q, want the selected entry %q", m.detailPath, want.Path)
+	}
+}
+
+// TestLayout_NoLineExceedsWidth pins the width-aware footer and layout:
+// no rendered line may be wider than the terminal (which would wrap).
+func TestLayout_NoLineExceedsWidth(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	for _, size := range [][2]int{{80, 24}, {100, 40}, {60, 20}, {44, 8}} {
+		m := NewModel()
+		m.width, m.height = size[0], size[1]
+		m.sizeWidgets()
+		for _, line := range strings.Split(m.View(), "\n") {
+			if w := lipgloss.Width(line); w > size[0] {
+				t.Fatalf("%dx%d: line is %d cells wide: %q", size[0], size[1], w, line)
+			}
+		}
+	}
+}
+
+func TestView_TooSmallNotice(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	m.width, m.height = 30, 24
+	m.sizeWidgets()
+	if !m.tooSmall {
+		t.Fatal("30x24 should be flagged too small")
+	}
+	view := m.View()
+	if !strings.Contains(view, "too small") {
+		t.Fatalf("no too-small notice:\n%s", view)
+	}
+	if strings.Contains(view, "Hack.ttf") {
+		t.Fatalf("too-small view still renders the library:\n%s", view)
+	}
+}
+
+func TestView_NarrowFoldsPreview(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	m.width, m.height = 60, 24
+	m.sizeWidgets()
+	if !m.narrow {
+		t.Fatal("60 columns should be narrow")
+	}
+	view := m.View()
+	if hasSideBySideBoxes(view) {
+		t.Fatalf("narrow layout still shows two columns:\n%s", view)
+	}
+	if !strings.Contains(view, "Alpha.ttf") {
+		t.Fatalf("narrow layout dropped the library:\n%s", view)
+	}
+	if strings.Contains(view, "AaBbCc") {
+		t.Fatalf("narrow layout still renders the preview pane:\n%s", view)
+	}
+}
+
+func TestLayout_NarrowDownloadFits(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	m.width, m.height = 60, 20
+	m.sizeWidgets()
+	m = updateModel(t, m, keyRunes("d"))
+	view := m.View()
+	if h := lipgloss.Height(view); h != 20 {
+		t.Fatalf("narrow download height = %d, want 20", h)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(line); w > 60 {
+			t.Fatalf("narrow download line is %d cells wide: %q", w, line)
+		}
+	}
+	if hasSideBySideBoxes(view) {
+		t.Fatalf("narrow download should be a single pane:\n%s", view)
+	}
+}
+
+// TestLayout_LiveDownloadStaysInBounds pins width discipline while a fetch
+// runs: neither the progress bar nor the "Downloading …" line may overrun
+// the download box in either layout.
+func TestLayout_LiveDownloadStaysInBounds(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	for _, size := range [][2]int{{100, 40}, {60, 20}} {
+		m := NewModel()
+		m.width, m.height = size[0], size[1]
+		m.sizeWidgets()
+		m = updateModel(t, m, keyRunes("d"))
+		m = updateModel(t, m, downloadStartMsg{name: "Some-Extremely-Long-Nerd-Font-Family-Name"})
+		m = updateModel(t, m, downloadProgressMsg{frac: 0.42, gen: m.dlGen, known: true})
+		for _, line := range strings.Split(m.View(), "\n") {
+			if w := lipgloss.Width(line); w > size[0] {
+				t.Fatalf("%dx%d: line is %d cells wide: %q", size[0], size[1], w, line)
+			}
+		}
+	}
+}
+
+func TestASCII_PlainChrome(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+	src, err := os.ReadFile(filepath.Join(paths.FontsDir(), "Hack.ttf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := paths.FontSlotPath("regular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(slot, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	SetASCII(true)
+	defer SetASCII(false)
+	m := NewModel()
+	// Narrow folds the preview (and its shell-prompt sample) away, so this
+	// asserts on chrome only.
+	m.width, m.height = 60, 24
+	m.sizeWidgets()
+	view := m.View()
+	for _, bad := range []string{"╭", "●", "…", "▶"} {
+		if strings.Contains(view, bad) {
+			t.Fatalf("ASCII mode leaked %q:\n%s", bad, view)
+		}
+	}
+	if !strings.Contains(view, "+-") {
+		t.Fatalf("ASCII mode lost the plain border:\n%s", view)
+	}
+	if !strings.Contains(view, "* regular") {
+		t.Fatalf("ASCII mode lost the applied badge:\n%s", view)
 	}
 }

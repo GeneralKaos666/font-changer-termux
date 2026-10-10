@@ -3,17 +3,67 @@ package tui
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
 	"github.com/GeneralKaos666/nerdfont-changer/internal/scan"
 	"github.com/GeneralKaos666/nerdfont-changer/internal/theme"
 )
+
+// Layout thresholds, in terminal cells.
+const (
+	wideMin = 80 // at/above this the two-column layout fits
+	minW    = 44 // hard floor: narrower than this and View shows a notice
+	minH    = 8  // hard floor: shorter than this and View shows a notice
+)
+
+// asciiMode swaps the box borders, selection marker, applied badge and
+// ellipsis for plain ASCII. It is off unless SetASCII says otherwise, so
+// Unicode terminals keep the rounded look.
+var asciiMode bool
+
+// SetASCII selects the plain-ASCII chrome. Call it before NewModel so the
+// derived (themed) styles pick up the ASCII border.
+func SetASCII(on bool) { asciiMode = on }
+
+// chrome helpers resolve the few glyphs that differ per rendering mode.
+func borderFor() lipgloss.Border {
+	if asciiMode {
+		return lipgloss.Border{
+			Top: "-", Bottom: "-", Left: "|", Right: "|",
+			TopLeft: "+", TopRight: "+", BottomLeft: "+", BottomRight: "+",
+		}
+	}
+	return lipgloss.RoundedBorder()
+}
+
+func ellipsis() string {
+	if asciiMode {
+		return "..."
+	}
+	return "…"
+}
+
+func markerGlyph() string {
+	if asciiMode {
+		return "> "
+	}
+	return "▶ "
+}
+
+func badgeDot() string {
+	if asciiMode {
+		return "*"
+	}
+	return "●"
+}
 
 // Restrained palette: accent + muted + default foreground only.
 var (
@@ -52,7 +102,7 @@ func applyTheme(p theme.Palette) {
 	}
 	titleStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Foreground(fgColor)
 	slotStyle = lipgloss.NewStyle().Foreground(muted)
-	boxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1)
+	boxStyle = lipgloss.NewStyle().Border(borderFor()).BorderForeground(accent).Padding(0, 1)
 	statusStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(fgColor)
 	helpStyle = lipgloss.NewStyle().Foreground(muted)
 	helpKeyStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
@@ -87,18 +137,25 @@ func (d fontDelegate) Spacing() int { return 1 }
 // Update is the update loop for items; rows are static.
 func (d fontDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
-// Render renders one row, accent-highlighting the filter match and giving
-// the selected row an accent background.
+// Render renders one row, accent-highlighting the filter match, marking
+// the selected row with a cursor glyph and giving it an accent background.
 func (d fontDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	fi, ok := item.(fontItem)
 	if !ok {
 		return
 	}
+	selected := index == m.Index()
 	// Truncate before styling: keeps cell widths exact and avoids
-	// cutting styled output mid-escape (color bleed).
+	// cutting styled output mid-escape (color bleed). The selected row
+	// reserves room for its marker so the row never overflows, and the
+	// marker (unlike color) survives monochrome terminals.
+	marker := ""
+	if selected {
+		marker = markerGlyph()
+	}
 	name := fi.entry.Name
 	if d.width > 0 {
-		room := d.width
+		room := d.width - runewidth.StringWidth(marker)
 		if fi.badge != "" {
 			room -= runewidth.StringWidth(fi.badge) + 1
 		}
@@ -113,8 +170,8 @@ func (d fontDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	if fi.badge != "" {
 		title += " " + badgeStyle.Render(fi.badge)
 	}
-	if index == m.Index() {
-		title = selectedStyle.Render(name)
+	if selected {
+		title = selectedStyle.Render(marker + name)
 		desc = selectedStyle.Render(descPlain)
 		if fi.badge != "" {
 			title += " " + selectedStyle.Render(fi.badge)
@@ -124,12 +181,12 @@ func (d fontDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 }
 
 // truncateCells cuts s to maxW terminal cells (CJK/emoji aware,
-// ANSI-escape aware), appending "…" when shortened.
+// ANSI-escape aware), appending an ellipsis when shortened.
 func truncateCells(s string, maxW int) string {
 	if maxW <= 0 {
 		return ""
 	}
-	return runewidth.Truncate(s, maxW, "…")
+	return runewidth.Truncate(s, maxW, ellipsis())
 }
 
 // highlightMatch bolds the first case-insensitive occurrence of query.
@@ -202,12 +259,12 @@ func (m Model) PreviewPane() string {
 	} else {
 		lines = append(lines, "", truncateCells(e.Name, inner),
 			truncateCells(entrySummary(e), inner))
-		if d, err := scan.Describe(e.Path); err == nil {
-			ver := d.Version
+		if m.hasDetail {
+			ver := m.detail.Version
 			if ver == "" {
 				ver = "—"
 			}
-			lines = append(lines, truncateCells(fmt.Sprintf("%d glyphs · %d UPM · %s", d.Glyphs, d.UPM, ver), inner))
+			lines = append(lines, truncateCells(fmt.Sprintf("%d glyphs · %d UPM · %s", m.detail.Glyphs, m.detail.UPM, ver), inner))
 		}
 	}
 	// Live shell prompt when captured (raw ANSI passes through, so it
@@ -258,8 +315,25 @@ func blendHex(a, b string, t float64) string {
 	return fmt.Sprintf("#%02X%02X%02X", mix(ar, br), mix(ag, bg), mix(ab, bb))
 }
 
-func helpBar() string {
-	keys := []string{"space/p preview", "enter keep", "s slot", "i import", "d download", "esc restore", "q quit", "tab filter"}
+// helpBar renders the context-sensitive key hints: the footer always
+// advertises exactly the keys that work in the current overlay/focus,
+// instead of one static wall of shortcuts.
+func (m Model) helpBar() string {
+	var keys []string
+	switch {
+	case m.overlay == overlayImportClash:
+		keys = []string{"1/i keep both", "2/r replace", "esc cancel"}
+	case m.overlay == overlayImport:
+		keys = []string{"enter import", "tab complete", "esc cancel"}
+	case m.overlay == overlayDownload && m.dlFilterFocused:
+		keys = []string{"type to filter", "esc done"}
+	case m.overlay == overlayDownload:
+		keys = []string{"↑/↓ choose", "tab filter", "enter download", "esc cancel"}
+	case m.focusFilter:
+		keys = []string{"type to search", "enter done", "esc clear"}
+	default:
+		keys = []string{"space/p try", "enter keep", "s slot", "i import", "d download", "esc undo", "q quit"}
+	}
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		if i := strings.Index(k, " "); i >= 0 {
@@ -271,15 +345,22 @@ func helpBar() string {
 	return helpStyle.Render(strings.Join(parts, " · "))
 }
 
-// View renders the two-column frame: title, the library/preview (or
-// download) panes, overlays, status and help — all TTY-free.
+// View renders the frame: title, the library/preview (or download) panes,
+// overlays, status and the context-sensitive help bar — all TTY-free.
+// Every line is clamped to the terminal width, so nothing can wrap.
 func (m Model) View() string {
 	if m.leftW == 0 {
 		m.sizeWidgets()
 	}
-	w := m.width
+	w, h := m.width, m.height
 	if w <= 0 {
 		w = 96
+	}
+	if h <= 0 {
+		h = 28
+	}
+	if m.tooSmall {
+		return tooSmallView(w, h)
 	}
 
 	title := titleStyle.Render(gradientTitle("nerdfont-changer")) + slotStyle.Render("slot: "+m.slot)
@@ -290,35 +371,60 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(title + "\n")
+	b.WriteString(clampLine(title, w) + "\n")
 	b.WriteString(body + "\n")
 
 	if m.overlay == overlayImport {
 		b.WriteString(boxStyle.Width(max(w-4, 30)).Render("Import font path:\n"+m.importInput.View()) + "\n")
 	}
 	if m.overlay == overlayImportClash {
-		b.WriteString(boxStyle.Width(max(w-4, 30)).Render("File already exists:\n[i] keep both  [r] replace  [esc] cancel") + "\n")
+		msg := "File already exists: " + filepath.Base(m.pendingImportPath)
+		b.WriteString(boxStyle.Width(max(w-4, 30)).Render(truncateCells(msg, max(w-10, 10))) + "\n")
 	}
 
 	status := m.status
 	if status == "" {
 		status = "—"
 	}
-	b.WriteString(statusStyle.Render(status) + "\n")
-	b.WriteString(helpBar())
+	b.WriteString(clampLine(statusStyle.Render(status), w) + "\n")
+	b.WriteString(clampLine(m.helpBar(), w))
 	return b.String()
 }
 
+// clampLine truncates a (possibly styled) line to at most w terminal cells,
+// appending an ellipsis. It is ANSI-aware, so escape sequences survive.
+func clampLine(s string, w int) string {
+	if w <= 0 || lipgloss.Width(s) <= w {
+		return s
+	}
+	return ansi.Truncate(s, w, ellipsis())
+}
+
+// tooSmallView is the floor state: a centered notice naming the minimum
+// size, in place of a mangled frame.
+func tooSmallView(w, h int) string {
+	msg := fmt.Sprintf("Terminal too small — need %d×%d, have %d×%d", minW, minH, w, h)
+	return lipgloss.Place(w, max(h, 1), lipgloss.Center, lipgloss.Center, clampLine(msg, w))
+}
+
 // libraryLayout is the default frame: library list left, preview right.
+// In narrow mode the preview folds away and the list spans the width.
 func (m Model) libraryLayout() string {
+	if m.narrow {
+		return m.listBox(m.contentW)
+	}
 	left := m.listBox(m.leftW)
 	right := boxStyle.Width(m.rightW).Render(m.PreviewPane())
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
 // downloadLayout swaps the panes while the Nerd Font picker is open:
-// download box left; preview over the library list on the right.
+// download box left; preview over the library list on the right. In
+// narrow mode the download box is the single pane.
 func (m Model) downloadLayout() string {
+	if m.narrow {
+		return m.downloadBox(m.contentW)
+	}
 	right := lipgloss.JoinVertical(lipgloss.Left,
 		boxStyle.Width(m.rightW).Render(m.PreviewPane()),
 		m.listBox(m.rightW),
@@ -375,7 +481,7 @@ func (m Model) downloadBox(width int) string {
 		if !m.dlKnown {
 			line += " (no progress info)"
 		}
-		b.WriteString("\n" + m.spinner.View() + line + "\n")
+		b.WriteString("\n" + clampLine(m.spinner.View()+line, width) + "\n")
 		b.WriteString(m.progress.ViewAs(m.dlProgress) + "\n")
 	}
 
@@ -384,21 +490,44 @@ func (m Model) downloadBox(width int) string {
 }
 
 func (m *Model) sizeWidgets() {
-	// Two columns share the width; title + status + help reserve three
-	// rows, and the rest is the column band. Each box adds a border plus
-	// a 1-cell padding on both sides, so children get a 2-cell margin.
-	w := m.width
+	// Two columns share the width normally; title + status + help reserve
+	// three rows, and the rest is the column band. Each box adds a border
+	// plus a 1-cell padding on both sides, so content gets a 2-cell margin.
+	w, h := m.width, m.height
 	if w <= 0 {
 		w = 96
 	}
-	total := max(w-8, 40)
-	m.leftW = total * 2 / 5    // left box content width
-	m.rightW = total - m.leftW // right box content width
+	if h <= 0 {
+		h = 28
+	}
+	m.narrow = w < wideMin
+	m.tooSmall = w < minW || h < minH
 
-	m.band = 28
+	m.band = 28 // unsized default
 	if m.height > 0 {
 		m.band = max(m.height-3, 4)
 	}
+	m.contentW = max(w-4, 10)
+
+	if m.narrow {
+		// Single pane: the list takes the full width; the preview folds
+		// away and its essentials live in the title/status lines.
+		m.leftW, m.rightW = m.contentW, m.contentW
+		m.previewW, m.previewH = m.contentW, 0
+		m.listRows = max(m.band-2-1, 1) // minus border and filter line
+		inner := max(m.contentW-2, 8)
+		m.filter.Width = max(m.contentW-8, 8)
+		m.dlFilter.Width = max(m.contentW-4, 8)
+		m.list.SetSize(inner, m.listRows)
+		m.delegate.width = inner
+		m.list.SetDelegate(m.delegate)
+		m.progress.Width = max(m.contentW, 20)
+		return
+	}
+
+	total := max(w-8, 40)
+	m.leftW = total * 2 / 5    // left box content width
+	m.rightW = total - m.leftW // right box content width
 
 	previewOuter, listOuter := m.band, m.band
 	if m.overlay == overlayDownload {
@@ -422,5 +551,7 @@ func (m *Model) sizeWidgets() {
 	m.list.SetSize(listInner, m.listRows)
 	m.delegate.width = listInner
 	m.list.SetDelegate(m.delegate)
-	m.progress.Width = max(m.rightW, 20)
+	// The progress bar lives in the left download box, so size it to that
+	// column (not the right one) or it would overrun the box during a fetch.
+	m.progress.Width = max(m.leftW, 20)
 }

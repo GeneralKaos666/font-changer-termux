@@ -22,6 +22,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.sizeWidgets()
 		return m, nil
+	case tea.ResumeMsg:
+		// The world may have changed while we were suspended (an import, a
+		// font applied elsewhere): re-read the library before redrawing.
+		if m.overlay == overlayNone {
+			m.rescan()
+		}
+		return m, nil
+	case promptMsg:
+		m.prompt = []string(msg)
+		return m, nil
 	case FilterMsg:
 		m.filter.SetValue(string(msg))
 		m.refreshItems()
@@ -84,7 +94,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// source path so the retry can re-import it.
 			m.overlay = overlayImportClash
 			m.pendingImportPath = msg.path
-			m.status = "File exists — 1 keep both, 2 replace, esc cancel"
+			m.status = "File exists — choose how to resolve"
 			return m, nil
 		}
 		if msg.err != nil {
@@ -120,8 +130,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// quit restores an uncommitted preview (best effort) and exits.
+func (m Model) quit() (tea.Model, tea.Cmd) {
+	if apply.IsPreviewDirty(m.state) {
+		if _, err := restoreOriginal(m.state); err != nil {
+			m.status = "Restore failed: " + err.Error() + " — quitting anyway"
+		} else {
+			m.status = "Restored original — bye"
+		}
+	}
+	return m, tea.Quit
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+
+	// Ctrl+C always quits (restoring an uncommitted preview), from any
+	// screen — Bubble Tea's own interrupt handling is disabled because
+	// input is a TTY.
+	if key == "ctrl+c" {
+		return m.quit()
+	}
 
 	if m.overlay == overlayImportClash {
 		switch key {
@@ -241,14 +270,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "q":
-		if apply.IsPreviewDirty(m.state) {
-			if _, err := restoreOriginal(m.state); err != nil {
-				m.status = "Restore failed: " + err.Error() + " — quitting anyway"
-			} else {
-				m.status = "Restored original — bye"
-			}
-		}
-		return m, tea.Quit
+		return m.quit()
+	case "ctrl+z":
+		return m, tea.Suspend
 	case "esc":
 		if apply.IsPreviewDirty(m.state) {
 			if _, err := restoreOriginal(m.state); err != nil {
@@ -276,7 +300,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		m.overlay = overlayImport
 		m.importInput.Focus()
-		m.status = "Import: type a font path — Enter imports, Esc cancels"
+		m.status = "Import: type a font path"
 		return m, textinput.Blink
 	case "d":
 		m.overlay = overlayDownload
@@ -287,11 +311,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dlFilter.Blur()
 		m.refreshDownloadItems()
 		m.sizeWidgets()
-		m.status = "Download: ↑/↓ choose · tab filter · Enter downloads, Esc cancels"
+		m.status = "Download: choose a Nerd Font"
 		return m, nil
 	}
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+	m.syncDetail()
 	return m, cmd
 }

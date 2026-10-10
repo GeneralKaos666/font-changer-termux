@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -132,8 +133,12 @@ func realMain(argv []string) int {
 	applyName := fs.String("apply", "", "Install library font NAME into --slot and exit.")
 	slot := fs.String("slot", "regular", "Font slot for --apply (default: regular).")
 	versionFlag := fs.Bool("version", false, "Print version and exit.")
+	asciiFlag := fs.Bool("ascii", false, "Draw the picker with plain ASCII borders and markers.")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(argv); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0 // -h/--help is a successful request for usage
+		}
 		return 2
 	}
 	if *versionFlag {
@@ -162,9 +167,24 @@ func realMain(argv []string) int {
 	if applyGiven {
 		return runApply(entries, *applyName, *slot)
 	}
-	if _, err := tea.NewProgram(tui.InitialModel()).Run(); err != nil {
+	asciiOn := *asciiFlag
+	if v := os.Getenv("NERDFONT_CHANGER_ASCII"); v != "" && v != "0" {
+		asciiOn = true
+	}
+	tui.SetASCII(asciiOn)
+	if !isTTY(os.Stdin) || !isTTY(os.Stdout) {
+		fmt.Fprintln(os.Stderr, "error: the interactive picker needs a terminal — use --list or --apply, or run it in a TTY")
+		return 2
+	}
+	if _, err := tea.NewProgram(tui.InitialModel(), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// isTTY reports whether f is attached to a terminal (a character device).
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
