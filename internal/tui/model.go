@@ -127,14 +127,11 @@ type Model struct {
 	importInput       textinput.Model
 	pendingImportPath string // source path of an import awaiting the clash choice
 
-	previewH int  // preview content height (0 = natural)
-	previewW int  // preview box content width
-	leftW    int  // left column box content width
-	rightW   int  // right column box content width
-	contentW int  // full-width content width in single-pane (narrow) mode
-	listRows int  // library list rows inside its box
-	band     int  // column band height (box outer height)
-	narrow   bool // terminal narrower than wideMin: preview folds away
+	previewH int  // preview content height (0 = preview folded away)
+	contentW int  // full-width box content width
+	listRows int  // lower-pane list rows inside its box
+	band     int  // stacked box band height (title/status/help excluded)
+	folded   bool // preview folded away: too short to afford it
 	tooSmall bool // terminal below the hard minimum: View shows a notice
 
 	// Cached font metadata for the selected entry. View never touches the
@@ -176,6 +173,7 @@ func NewModel() Model {
 		status = "Library load failed: " + loadErr.Error()
 	}
 	filter := textinput.New()
+	filter.Prompt = filterGlyph()
 	filter.Placeholder = "Filter fonts (tab)"
 	filter.CharLimit = 64
 
@@ -192,6 +190,7 @@ func NewModel() Model {
 	importInput.CharLimit = 256
 
 	dlFilter := textinput.New()
+	dlFilter.Prompt = filterGlyph()
 	dlFilter.Placeholder = "Type to filter Nerd Fonts..."
 	dlFilter.CharLimit = 64
 

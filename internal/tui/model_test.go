@@ -359,7 +359,7 @@ func TestPreviewPane_ShowsDetailsAndPrompt(t *testing.T) {
 	}
 }
 
-func TestView_TwoColumnLayout(t *testing.T) {
+func TestView_VerticalLayout(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
 	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
@@ -368,12 +368,21 @@ func TestView_TwoColumnLayout(t *testing.T) {
 	m.width, m.height = 100, 40
 	m.sizeWidgets()
 	view := m.View()
-	// Two panes sit side by side: one rendered line carries the top-left
-	// corner of both boxes.
-	if !hasSideBySideBoxes(view) {
-		t.Fatalf("expected two columns (side-by-side boxes):\n%s", view)
+	// The panes are stacked, never side by side: no line carries two
+	// top-left box corners.
+	if hasSideBySideBoxes(view) {
+		t.Fatalf("expected a vertical stack, got two columns:\n%s", view)
 	}
-	// The library list (left) and the preview (right) both render.
+	// The preview sits above the library.
+	pane := strings.Index(view, "╭─ Preview")
+	lib := strings.Index(view, "╭─ Library")
+	if pane < 0 || lib < 0 {
+		t.Fatalf("missing titled panes (preview=%d library=%d):\n%s", pane, lib, view)
+	}
+	if pane > lib {
+		t.Fatalf("preview should sit above the library:\n%s", view)
+	}
+	// Both panes render their content.
 	entries := m.VisibleEntries()
 	if len(entries) < 2 {
 		t.Fatalf("want >= 2 visible entries, got %d", len(entries))
@@ -395,6 +404,26 @@ func hasSideBySideBoxes(view string) bool {
 		}
 	}
 	return false
+}
+
+// TestLayout_PaneLinesFillWidth pins the titled border to the body width:
+// the box glyphs are multibyte, so a byte-length slip shrinks the top rule.
+func TestLayout_PaneLinesFillWidth(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	m.width, m.height = 100, 40
+	m.sizeWidgets()
+	for _, line := range strings.Split(m.View(), "\n") {
+		if !strings.HasPrefix(line, "╭") && !strings.HasPrefix(line, "│") && !strings.HasPrefix(line, "╰") {
+			continue
+		}
+		if w := lipgloss.Width(line); w != 100 {
+			t.Fatalf("pane line is %d cells wide, want 100: %q", w, line)
+		}
+	}
 }
 
 func TestDownload_FilterNarrowsList(t *testing.T) {
@@ -455,7 +484,7 @@ func TestDownload_WindowKeepsCursorVisible(t *testing.T) {
 	}
 }
 
-func TestDownload_LayoutFitsAndSwapsColumns(t *testing.T) {
+func TestDownload_LayoutFitsAndStacks(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
 	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
@@ -471,8 +500,13 @@ func TestDownload_LayoutFitsAndSwapsColumns(t *testing.T) {
 	if !strings.Contains(view, "Nerd Fonts") {
 		t.Fatalf("download box missing:\n%s", view)
 	}
-	if !hasSideBySideBoxes(view) {
-		t.Fatalf("expected download box beside preview/list:\n%s", view)
+	// The picker swaps into the lower pane; the preview stays on top and
+	// nothing renders side by side.
+	if !strings.Contains(view, "╭─ Preview") {
+		t.Fatalf("download view dropped the preview:\n%s", view)
+	}
+	if hasSideBySideBoxes(view) {
+		t.Fatalf("download view should stack, not sit side by side:\n%s", view)
 	}
 }
 
@@ -1059,7 +1093,32 @@ func TestView_TooSmallNotice(t *testing.T) {
 	}
 }
 
-func TestView_NarrowFoldsPreview(t *testing.T) {
+func TestView_ShortFoldsPreview(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
+
+	m := NewModel()
+	m.width, m.height = 60, 12
+	m.sizeWidgets()
+	if !m.folded {
+		t.Fatal("a 12-row terminal should fold the preview away")
+	}
+	view := m.View()
+	if hasSideBySideBoxes(view) {
+		t.Fatalf("folded layout shows two columns:\n%s", view)
+	}
+	if !strings.Contains(view, "Alpha.ttf") {
+		t.Fatalf("folded layout dropped the library:\n%s", view)
+	}
+	if strings.Contains(view, "AaBbCc") {
+		t.Fatalf("folded layout still renders the preview pane:\n%s", view)
+	}
+}
+
+// A narrow but tall terminal keeps the vertical stack: width no longer
+// forces the preview away, only height does.
+func TestView_VerticalWorksNarrow(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
 	seedLibrary(t, "Alpha.ttf", "Beta.ttf")
@@ -1067,18 +1126,18 @@ func TestView_NarrowFoldsPreview(t *testing.T) {
 	m := NewModel()
 	m.width, m.height = 60, 24
 	m.sizeWidgets()
-	if !m.narrow {
-		t.Fatal("60 columns should be narrow")
+	if m.folded {
+		t.Fatal("a 60x24 terminal should keep the preview")
 	}
 	view := m.View()
 	if hasSideBySideBoxes(view) {
-		t.Fatalf("narrow layout still shows two columns:\n%s", view)
+		t.Fatalf("narrow layout should stack, not sit side by side:\n%s", view)
 	}
-	if !strings.Contains(view, "Alpha.ttf") {
-		t.Fatalf("narrow layout dropped the library:\n%s", view)
+	if !strings.Contains(view, "╭─ Preview") || !strings.Contains(view, "╭─ Library") {
+		t.Fatalf("narrow stack missing a pane:\n%s", view)
 	}
-	if strings.Contains(view, "AaBbCc") {
-		t.Fatalf("narrow layout still renders the preview pane:\n%s", view)
+	if !strings.Contains(view, "AaBbCc") {
+		t.Fatalf("narrow stack dropped the preview content:\n%s", view)
 	}
 }
 
@@ -1101,7 +1160,7 @@ func TestLayout_NarrowDownloadFits(t *testing.T) {
 		}
 	}
 	if hasSideBySideBoxes(view) {
-		t.Fatalf("narrow download should be a single pane:\n%s", view)
+		t.Fatalf("narrow download should stack, not sit side by side:\n%s", view)
 	}
 }
 
@@ -1147,8 +1206,6 @@ func TestASCII_PlainChrome(t *testing.T) {
 	SetASCII(true)
 	defer SetASCII(false)
 	m := NewModel()
-	// Narrow folds the preview (and its shell-prompt sample) away, so this
-	// asserts on chrome only.
 	m.width, m.height = 60, 24
 	m.sizeWidgets()
 	view := m.View()

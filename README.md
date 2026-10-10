@@ -63,8 +63,8 @@ coverage, facts about the font (glyph count and version), your actual
 shell prompt, and which terminal slot it would fill. The bottom half is
 your font collection — fonts already in use carry a `● slot` badge.
 The list is ready for arrow keys right away; press `Tab` to jump to the
-search box. On a narrow terminal the preview folds away and the list
-takes the whole screen; a window smaller than 44 columns by 8 rows gets a
+search box. On a short terminal the preview folds away and the list takes
+the whole screen; a window smaller than 44 columns by 8 rows gets a
 "terminal too small" notice instead of a squashed frame.
 
 Prefer the command line? These work too (great for scripts):

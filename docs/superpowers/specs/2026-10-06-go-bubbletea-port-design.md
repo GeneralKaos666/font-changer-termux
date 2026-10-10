@@ -25,10 +25,10 @@ full Go rewrite of `termux-fonts`, behavior-compatible with the Python TUI.
 
 **Non-goals:** changing the on-disk contract; APK wrapper; Ratatui variant;
 feature parity beyond the Python TUI — except deliberate Go-only additions:
-the full 46-family Nerd Font catalog with the two-column filtered download
+the full 46-family Nerd Font catalog with the filtered download
 picker; the live shell-prompt row in the preview pane (captures `$SHELL -ic`
 once per session, ANSI-safe, mock fallback); and the glyph/UPM/version
-metadata line.
+metadata grid.
 
 ## 2. Architecture (approved)
 
@@ -50,12 +50,14 @@ Python sources remain on `main` only; the branch is a clean rewrite. The Python
 spec stays the behavioral authority; conflicts resolve against it.
 
 Elm pattern: one `Model` (entries, filter, slot, session state, status),
-`Update` routes key/filter/download messages, `View` renders list (42%) +
-preview (58%) via Bubbles `list` + `textinput` + `viewport`, styled with Lip Gloss.
-The two-column split applies at >= 80 columns; narrower terminals fold the
-preview away (single-pane list), and below 44x8 `View` shows a "terminal
-too small" notice. The picker runs on the alternate screen (restored on
-exit), so it never scribbles over scrollback.
+`Update` routes key/filter/download messages, `View` renders a vertical
+stack — preview on top, library list (or the Nerd Font picker) below — via
+Bubbles `list` + `textinput`, styled with Lip Gloss. The split gives the
+preview its natural height, capped at 45% of the band and leaving the lower
+pane a three-row floor; a terminal too short to afford the preview folds it
+away (single-pane list), and below 44x8 `View` shows a "terminal too small"
+notice. The picker runs on the alternate screen (restored on exit), so it
+never scribbles over scrollback.
 
 ## 3. Components (approved)
 
@@ -89,25 +91,36 @@ exit), so it never scribbles over scrollback.
 ## 8. Visual style (approved)
 
 Keyboard-first Lip Gloss treatment, no mouse required:
-- Gradient title bar (`termux-fonts` + active slot), rounded borders with a
-  single adaptive accent color that stays readable on dark and light terminals.
-- Preview pane: large `AaBbCc 0123456789` sample block, Nerd/powerline
-  coverage row (`  `), plus file info (family/style/size), the
-  glyph/UPM/version info line, the live shell-prompt line, and slot +
-  backup-status line (`font.ttf ← Hack • backup taken`).
+- Gradient title bar (`nerdfont-changer`) with an accent active-slot chip
+  (`⟨ regular ⟩`), rounded borders in a single adaptive accent color that
+  stays readable on dark and light terminals. Each pane carries a title
+  embedded in its top border (`Preview`, `Library`, `Nerd Fonts`).
+- Vertical stack: the preview sits on top, the library list (or the Nerd
+  Font picker while downloading) below. The band is shared — the preview
+  takes its natural height, capped at 45% and leaving the lower pane a
+  three-row floor; a terminal too short to afford the preview folds it away
+  and the list takes the whole band.
+- Preview pane: a name + style header over a dim dotted rule, the large
+  `AaBbCc 0123456789` sample block, the Nerd/powerline coverage row, a dim
+  rule, a two-column metadata grid (`glyphs`, `UPM`, `version`, `slot`,
+  `file`, `backup`), and the live shell-prompt lines (mock fallback).
+- Library list: a `⌕` search prompt with a dim right-aligned count; rows
+  carry the family/style/size summary and an accent `● slot` badge; the
+  selected row carries both an accent background and a `▶` cursor marker,
+  so the selection survives monochrome terminals (where termenv strips all
+  color and attributes). The download picker's window shrinks to the rows
+  actually available, so its cursor stays visible.
 - Filter input with match highlighting; a context-sensitive help bar that
   lists only the keys active on the current screen (main / filter / import /
-  download / clash); spinner + progress bar on downloads; the selected row
-  carries both an accent background and a `▶` cursor marker, so the selection
-  survives monochrome terminals (where termenv strips all color and
-  attributes).
+  download / clash); spinner + progress bar on downloads.
 - Width discipline: every rendered line is clamped to the terminal width, so
-  the frame never wraps; `< 80` columns folds the preview away and `< 44x8`
-  shows a floor notice naming the minimum size. The picker runs on the
-  alternate screen, so it never scribbles over scrollback.
+  the frame never wraps; `< 44x8` shows a floor notice naming the minimum
+  size. The picker runs on the alternate screen, so it never scribbles over
+  scrollback.
 - Optional plain-ASCII chrome (`--ascii`, `NERDFONT_CHANGER_ASCII=1`) swaps
-  the rounded borders, `●` badge, `▶` marker and `…` ellipsis for
-  `+ - | * > ...`; the previewed glyph samples stay Unicode (they are the
+  the rounded borders, `⟨⟩` chip, `⌕` prompt, `┄` rule, `●` badge, `▶` marker,
+  `…` ellipsis and the prompt/coverage samples for `+ - | < > ? * ...`; the
+  previewed glyph samples stay Unicode in the default mode (they are the
   point of the tool).
 - Restrained palette: accent + muted + default foreground only — no rainbow.
 

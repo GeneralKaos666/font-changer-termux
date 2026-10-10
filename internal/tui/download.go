@@ -25,6 +25,20 @@ type downloadDoneMsg struct {
 // dlWindow is how many Nerd Font names the download box shows at once.
 const dlWindow = 12
 
+// dlWindowRows is how many catalog names actually fit in the download pane
+// right now. It shrinks below dlWindow on short terminals so the cursor
+// stays visible; before the first size, the cap is assumed.
+func (m Model) dlWindowRows() int {
+	if m.listRows <= 0 {
+		return dlWindow
+	}
+	avail := m.listRows - 1 // the filter line
+	if m.dlActive {
+		avail -= 3 // blank, downloading line, progress bar
+	}
+	return min(dlWindow, max(avail, 1))
+}
+
 // refreshDownloadItems recomputes the filtered Nerd Font catalog and keeps
 // the cursor on a real row.
 func (m *Model) refreshDownloadItems() {
@@ -48,14 +62,15 @@ func (m *Model) refreshDownloadItems() {
 // clampDownloadWindow slides the visible window so the cursor always sits
 // inside it without leaving a partial page at the end.
 func (m *Model) clampDownloadWindow() {
+	win := m.dlWindowRows()
 	if m.dlCursor < m.dlOffset {
 		m.dlOffset = m.dlCursor
 	}
-	if m.dlCursor >= m.dlOffset+dlWindow {
-		m.dlOffset = m.dlCursor - dlWindow + 1
+	if m.dlCursor >= m.dlOffset+win {
+		m.dlOffset = m.dlCursor - win + 1
 	}
-	if m.dlOffset > len(m.dlFiltered)-dlWindow {
-		m.dlOffset = len(m.dlFiltered) - dlWindow
+	if m.dlOffset > len(m.dlFiltered)-win {
+		m.dlOffset = len(m.dlFiltered) - win
 	}
 	if m.dlOffset < 0 {
 		m.dlOffset = 0
