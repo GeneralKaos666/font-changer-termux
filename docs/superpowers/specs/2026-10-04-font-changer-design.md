@@ -158,6 +158,8 @@ real copy/backup/reload-mocked flows.
   (`textual>=0.60`, `fontTools` recommended).
 - Out of scope Phase 1: APK, in-pane raster of uninstalled fonts, font
   merging, system fonts, root tricks.
+- Go port adds: full Nerd catalog + download picker, live shell-prompt row,
+  glyph/UPM metadata, palette theming (see Go port spec §1).
 
 ## 7. Phase 2 notes (not specced)
 

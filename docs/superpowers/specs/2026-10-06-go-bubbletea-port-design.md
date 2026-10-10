@@ -16,7 +16,7 @@ full Go rewrite of `termux-fonts`, behavior-compatible with the Python TUI.
 - Single `termux-fonts` binary: browse 22-font library, filter, manual live
   preview (Space/p), commit (Enter), restore (Esc), 4 slots, import, Nerd download.
 - Same on-disk contract: `~/.termux/fonts/`, `font*.ttf` slots,
-  `~/.termux/backups/<slot>-YYYY-MM-DD-HHMMSS.ttf` (one per slot per session),
+  `~/.termux/backups/<slot>-YYYY-MM-DD-HHMMSS.ttf` (one per slot, anchored reuse — filename-scoped, Python parity),
   `termux-reload-settings` after every install/preview/restore.
 - `TERMUX_HOME` override honored so tests never touch real `~/.termux`.
 - Lessons carried over: list focused on launch (arrows work, no Tab needed);
@@ -24,7 +24,11 @@ full Go rewrite of `termux-fonts`, behavior-compatible with the Python TUI.
   OSError-tolerant actions; non-blocking downloads.
 
 **Non-goals:** changing the on-disk contract; APK wrapper; Ratatui variant;
-feature parity beyond the Python TUI (no new manager features — YAGNI).
+feature parity beyond the Python TUI — except deliberate Go-only additions:
+the full 46-family Nerd Font catalog with the two-column filtered download
+picker; the live shell-prompt row in the preview pane (captures `$SHELL -ic`
+once per session, ANSI-safe, mock fallback); and the glyph/UPM/version
+metadata line.
 
 ## 2. Architecture (approved)
 
@@ -38,7 +42,7 @@ internal/scan/scan.go             # list_library, read_active, FontEntry
 internal/validate/validate.go     # magic + sfnt parse check
 internal/apply/apply.go           # backup-once, preview/commit/restore, reload
 internal/importer/importer.go     # validate+copy, clash policy
-internal/downloader/downloader.go # 11 Nerd URLs, skip-if-size, atomic rename
+internal/downloader/downloader.go # 46-family Nerd catalog (one Regular per family plus JetBrainsMono-Light), skip-if-size, atomic rename
 internal/tui/model.go             # Bubble Tea Model/Update/View + Bubbles widgets
 ```
 
@@ -54,7 +58,8 @@ preview (58%) via Bubbles `list` + `textinput` + `viewport`, styled with Lip Glo
 1. **paths** — `TermuxDir()`, `FontsDir()`, `FontSlotPath(slot)`,
    `BackupsDir()`, `SLOT_FILES`; `TERMUX_HOME` wins, else `$HOME/.termux`.
 2. **scan** — glob `*.ttf|*.otf` (case variants), sort case-insensitive;
-   family/style from `golang.org/x/image/font/sfnt` name table, filename fallback.
+   family/style from `golang.org/x/image/font/sfnt` name table, filename
+   fallback; `scan.Describe` drives the glyph/UPM/version line.
 3. **validate** — magic `00 01 00 00 | OTTO | true | typ1` + `sfnt.Parse`
    (forces table read so magic+zeros fail, mirroring the `font["name"]` probe).
 4. **apply** — `SnapshotOriginals`, `NewSessionState`, `EnsureBackupOnce`
@@ -62,12 +67,18 @@ preview (58%) via Bubbles `list` + `textinput` + `viewport`, styled with Lip Glo
    `InstallFont`, `PreviewFont` (dirty+preview), `CommitPreview`, `RestoreOriginal`,
    `ReloadSettings` (`exec.LookPath` + run, missing → false + manual-restart hint).
 5. **importer** — `ImportFile(src, clash)` with `error|keep-both|replace`;
-   EACCES → `termux-setup-storage` hint.
-6. **downloader** — `NERD_FONTS` (same 11 URLs), `Fetch(name, force)` via
-   `net/http` HEAD size skip, temp + atomic rename, partial cleanup.
+   EACCES → `termux-setup-storage` hint. The import flow gains a
+   three-choice clash prompt (keep-both / replace / cancel), `~` expansion,
+   and tab-complete of `$HOME` paths (deferred in the Python TUI, approved
+   here).
+6. **downloader** — full 46-family `NERD_FONTS` (one Regular per family
+   plus `JetBrainsMono-Light`), pinned to the v3.2.1 `nfBase`; `Fetch(name,
+   force)` via `net/http` HEAD size skip, temp + atomic rename, partial
+   cleanup.
 7. **tui** — Model/Update/View; keymap space/p/enter/s/i/d/esc/q identical to
    Python; downloads as `tea.Cmd` producing messages; all I/O errors surface
    in the status line, never crash.
+8. **theme** — `colors.properties` palette → adaptive accent/muted.
 
 ## 8. Visual style (approved)
 
@@ -75,7 +86,8 @@ Keyboard-first Lip Gloss treatment, no mouse required:
 - Gradient title bar (`termux-fonts` + active slot), rounded borders with a
   single adaptive accent color that stays readable on dark and light terminals.
 - Preview pane: large `AaBbCc 0123456789` sample block, Nerd/powerline
-  coverage row (`  `), plus file info (family/style/size) and slot +
+  coverage row (`  `), plus file info (family/style/size), the
+  glyph/UPM/version info line, the live shell-prompt line, and slot +
   backup-status line (`font.ttf ← Hack • backup taken`).
 - Filter input with match highlighting; styled help bar with all keys;
   spinner + progress bar on downloads; selected row highlighted with
@@ -91,7 +103,7 @@ overlays; `q` quits (restores if dirty). No auto-apply on highlight, same as Pyt
 
 ## 5. Error handling (approved)
 
-Invalid/corrupt rejected pre-copy; one backup per slot per session; reload-missing
+Invalid/corrupt rejected pre-copy; one backup per slot, anchored reuse (filename-scoped); reload-missing
 shows manual-restart hint; `/sdcard` EACCES suggests `termux-setup-storage`;
 TUI converts all I/O errors to status messages.
 
