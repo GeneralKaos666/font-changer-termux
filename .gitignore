@@ -3,3 +3,6 @@ AGENTS.md
 
 # Isolated worktrees
 .worktrees/
+
+# Local release build output
+dist/
