@@ -1,4 +1,4 @@
-// Package paths centralizes every filesystem location used by termux-fonts.
+// Package paths centralizes every filesystem location used by nerdfont-changer.
 //
 // All paths funnel through TermuxDir so tests can point the whole
 // application at a temporary directory via the TERMUX_HOME env var.

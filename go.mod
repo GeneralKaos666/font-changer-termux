@@ -1,4 +1,4 @@
-module github.com/GeneralKaos666/font-changer-termux
+module github.com/GeneralKaos666/nerdfont-changer
 
 go 1.26.0
 

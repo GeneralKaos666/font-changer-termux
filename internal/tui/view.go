@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
-	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
-	"github.com/GeneralKaos666/font-changer-termux/internal/theme"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/scan"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/theme"
 )
 
 // Restrained palette: accent + muted + default foreground only.
@@ -282,7 +282,7 @@ func (m Model) View() string {
 		w = 96
 	}
 
-	title := titleStyle.Render(gradientTitle("termux-fonts")) + slotStyle.Render("slot: "+m.slot)
+	title := titleStyle.Render(gradientTitle("nerdfont-changer")) + slotStyle.Render("slot: "+m.slot)
 
 	body := m.libraryLayout()
 	if m.overlay == overlayDownload {

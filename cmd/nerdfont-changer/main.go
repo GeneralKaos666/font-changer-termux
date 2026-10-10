@@ -1,4 +1,4 @@
-// Command termux-fonts changes the Termux terminal font, either through
+// Command nerdfont-changer changes the Termux terminal font, either through
 // an interactive Bubble Tea picker or non-interactive --list / --apply
 // flags for scripting.
 package main
@@ -13,10 +13,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/apply"
-	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
-	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
-	"github.com/GeneralKaos666/font-changer-termux/internal/tui"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/apply"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/scan"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/tui"
 )
 
 // version is the build version, overridden at release time with
@@ -127,7 +127,7 @@ func main() {
 
 func realMain(argv []string) int {
 	ensureBuiltinSeed()
-	fs := flag.NewFlagSet("termux-fonts", flag.ContinueOnError)
+	fs := flag.NewFlagSet("nerdfont-changer", flag.ContinueOnError)
 	list := fs.Bool("list", false, "Print library font names and exit.")
 	applyName := fs.String("apply", "", "Install library font NAME into --slot and exit.")
 	slot := fs.String("slot", "regular", "Font slot for --apply (default: regular).")
@@ -137,7 +137,7 @@ func realMain(argv []string) int {
 		return 2
 	}
 	if *versionFlag {
-		fmt.Printf("termux-fonts %s\n", version)
+		fmt.Printf("nerdfont-changer %s\n", version)
 		return 0
 	}
 	if _, err := paths.FontSlotPath(*slot); err != nil {

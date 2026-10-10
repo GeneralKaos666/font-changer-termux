@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/image/font/sfnt"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
 )
 
 // FontEntry is one font file in the user's font library.

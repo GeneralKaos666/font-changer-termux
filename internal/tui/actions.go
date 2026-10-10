@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/apply"
-	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
-	"github.com/GeneralKaos666/font-changer-termux/internal/scan"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/apply"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/scan"
 )
 
 func (m *Model) rescan() {

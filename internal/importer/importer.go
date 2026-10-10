@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
-	"github.com/GeneralKaos666/font-changer-termux/internal/validate"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/validate"
 )
 
 // storageHint explains the shared-storage permission fix, mirroring the

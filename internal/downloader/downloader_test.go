@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/downloader"
-	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/downloader"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
 )
 
 // TestNerdFonts_AllFamiliesRegular pins the expanded catalog: one healthy

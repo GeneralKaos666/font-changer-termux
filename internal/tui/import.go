@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/importer"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/importer"
 )
 
 type importDoneMsg struct {

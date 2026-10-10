@@ -1,4 +1,4 @@
-# termux-fonts
+# nerdfont-changer
 
 Change your Termux terminal font with a friendly fullscreen picker.
 Browse your fonts, try each one live, and keep the one you love — with
@@ -12,22 +12,42 @@ shell prompt in every candidate font. What you see is what you get.
 You need [Go](https://go.dev/dl/) 1.26 or newer, then run:
 
 ```bash
-go install github.com/GeneralKaos666/font-changer-termux/cmd/termux-fonts@latest
+go install github.com/GeneralKaos666/nerdfont-changer/cmd/nerdfont-changer@latest
 ```
 
-This puts a `termux-fonts` command on your system. If your shell can't
-find it afterwards, add Go's install folder to your `PATH`, or install
-straight into Termux's own folder instead:
+This puts a `nerdfont-changer` command on your system. If your shell
+can't find it afterwards, add Go's install folder to your `PATH`, or
+install straight into Termux's own folder instead:
 
 ```bash
-GOBIN=$PREFIX/bin go install github.com/GeneralKaos666/font-changer-termux/cmd/termux-fonts@latest
+GOBIN=$PREFIX/bin go install github.com/GeneralKaos666/nerdfont-changer/cmd/nerdfont-changer@latest
+```
+
+No Go toolchain? Grab the prebuilt arm64 binary from the
+[latest release](https://github.com/GeneralKaos666/nerdfont-changer/releases/latest):
+
+```bash
+curl -L -o nerdfont-changer \
+  https://github.com/GeneralKaos666/nerdfont-changer/releases/latest/download/nerdfont-changer-android-arm64
+install -Dm755 nerdfont-changer "$PREFIX/bin/nerdfont-changer"
 ```
 
 Want to poke around safely first? Point the tool at a throwaway folder
 so your real setup stays untouched:
 
 ```bash
-TERMUX_HOME=$PREFIX/tmp/fc-go-demo termux-fonts --list
+TERMUX_HOME=$PREFIX/tmp/fc-go-demo nerdfont-changer --list
+```
+
+### Upgrading from `termux-fonts`
+
+Up to v0.1.0 this tool installed a `termux-fonts` command from a
+`font-changer-termux` module path. Both are renamed to match this repo.
+If you have the old command installed, remove it and reinstall:
+
+```bash
+rm -f "$(command -v termux-fonts)"     # usually in $PREFIX/bin or ~/go/bin
+GOBIN=$PREFIX/bin go install github.com/GeneralKaos666/nerdfont-changer/cmd/nerdfont-changer@latest
 ```
 
 ## Usage
@@ -35,7 +55,7 @@ TERMUX_HOME=$PREFIX/tmp/fc-go-demo termux-fonts --list
 Open the picker:
 
 ```bash
-termux-fonts
+nerdfont-changer
 ```
 
 The top half previews the highlighted font: a sample alphabet, symbol
@@ -48,8 +68,8 @@ search box.
 Prefer the command line? These work too (great for scripts):
 
 ```bash
-termux-fonts --list
-termux-fonts --apply "JetBrainsMono.ttf" --slot regular
+nerdfont-changer --list
+nerdfont-changer --apply "JetBrainsMono.ttf" --slot regular
 ```
 
 Termux has four font slots: `regular`, `bold`, `italic`, and

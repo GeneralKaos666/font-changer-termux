@@ -1,5 +1,5 @@
 // Package apply implements backup-once preview/commit/restore and the
-// Termux settings reload used by termux-fonts.
+// Termux settings reload used by nerdfont-changer.
 package apply
 
 import (
@@ -12,8 +12,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/GeneralKaos666/font-changer-termux/internal/paths"
-	"github.com/GeneralKaos666/font-changer-termux/internal/validate"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/paths"
+	"github.com/GeneralKaos666/nerdfont-changer/internal/validate"
 )
 
 // PreviewRef identifies the font file previewed into a slot.
