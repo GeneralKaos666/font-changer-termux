@@ -68,12 +68,12 @@ func (m *Model) doCommit() {
 		m.status = "No font selected"
 		return
 	}
-	target, err := apply.InstallFont(e.Path, m.slot)
+	_, err := apply.InstallFont(e.Path, m.slot)
 	if err != nil {
 		m.status = "Install failed: " + err.Error()
 		return
 	}
-	m.status = fmt.Sprintf("Installed %s → %s", filepath.Base(target), m.slot) + reloadHint()
+	m.status = fmt.Sprintf("Installed %s → %s slot", e.Name, m.slot) + reloadHint()
 }
 
 func clamp01(f float64) float64 {

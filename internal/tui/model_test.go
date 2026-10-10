@@ -567,6 +567,21 @@ func TestCommit_ToastNamesCommittedSlot(t *testing.T) {
 	}
 }
 
+func TestCommit_InstallToastNamesFontAndSlot(t *testing.T) {
+	useTermuxHome(t)
+	noReload(t)
+	seedLibrary(t, "Hack.ttf")
+
+	m := NewModel()
+	m = updateModel(t, m, keyRunes("enter")) // no preview → non-dirty install path
+	if !strings.HasPrefix(m.status, "Installed ") {
+		t.Fatalf("status = %q, want it to start with %q", m.status, "Installed ")
+	}
+	if !strings.Contains(m.status, "Hack.ttf") || !strings.Contains(m.status, "regular slot") {
+		t.Fatalf("status = %q, want the font name and slot in the toast", m.status)
+	}
+}
+
 func TestLayout_TilesTerminalHeight(t *testing.T) {
 	useTermuxHome(t)
 	noReload(t)
