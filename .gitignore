@@ -1,2 +1,5 @@
 # Local agent instruction file — not for version control
 AGENTS.md
+
+# Isolated worktrees
+.worktrees/
