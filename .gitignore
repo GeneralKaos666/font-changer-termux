@@ -1,6 +1,9 @@
 # Local agent instruction file — not for version control
 AGENTS.md
 
+# Local design specs/plans — not for version control
+docs/superpowers/
+
 # Isolated worktrees
 .worktrees/
 
